@@ -1,0 +1,73 @@
+autoencoder:
+  class: VQModel
+  model:
+    bottleneck_blocks: 32
+    c_hidden: 480
+    c_in: 2
+    c_latent: 4
+    c_out: 2
+    codebook_size: 2048
+    levels: 4
+  train:
+    batch_size: 8
+    checkpoint_every: 1000
+    data_path: ../data/lakh_giant_midi_prmat2c_8bin_lmdb
+    gradient_accumulation_steps: 2
+    gradient_clip_val: 1.0
+    learning_rate: 0.0001
+    logger_kwargs:
+      entity: rainbow_tensor
+      id: ggwxtnbl
+      log_model: all
+      project: music_diffusion
+    lr_warmup_steps: 500
+    mixed_precision: 'no'
+    num_epochs: 50
+    resume: true
+    save_dir: ./models
+    save_name: autoencoder
+music_diffusion:
+  class: MusicDiffusion
+  model:
+    c_in: 4
+    c_out: 4
+    c_r: 64
+    patch_size: 2
+    c_cond: 0
+    c_hidden:
+    - 512
+    - 1024
+    - 1024
+    nhead:
+    - -1
+    - 16
+    - 16
+    blocks:
+    - 6
+    - 14
+    - 6
+    level_config:
+    - CT
+    - CTA
+    - CTA
+    n_class_cond: 6
+    kernel_size: 3
+    dropout: 0.1
+  train:
+    batch_size: 4
+    checkpoint_every: 1000
+    data_path: ../data/lakh_reduced_prmat2c_8bin_pt2_lmdb
+    gradient_accumulation_steps: 2
+    gradient_clip_val: 1.0
+    learning_rate: 0.0001
+    logger_kwargs:
+      entity: rainbow_tensor
+      id: 
+      log_model: all
+      project: music_diffusion
+    lr_warmup_steps: 500
+    mixed_precision: fp16
+    num_epochs: 50
+    resume: false
+    save_dir: ./models
+    save_name: music_diffusion

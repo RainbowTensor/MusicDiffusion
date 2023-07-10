@@ -123,4 +123,4 @@ class Autoencoder(nn.Module):
             np.zeros_like(recon_np)
         )
 
-        return onset_np
+        return recon_np

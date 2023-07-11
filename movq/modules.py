@@ -71,16 +71,27 @@ class SpatialNorm(nn.Module):
         return new_f
 
 
-def Normalize(in_channels, zq_ch, add_conv):
-    return SpatialNorm(
-        in_channels,
-        zq_ch,
-        norm_layer=nn.GroupNorm,
-        freeze_norm_layer=False,
-        add_conv=add_conv,
-        num_groups=32,
-        eps=1e-6,
-        affine=True,
+def Normalize(in_channels, zq_ch, add_conv, num_groups=32):
+    if zq_ch:
+        return SpatialNorm(
+            in_channels,
+            zq_ch,
+            norm_layer=nn.GroupNorm,
+            freeze_norm_layer=False,
+            add_conv=add_conv,
+            num_groups=32,
+            eps=1e-6,
+            affine=True,
+        )
+    
+    return torch.nn.GroupNorm(
+        num_groups=num_groups, num_channels=in_channels, eps=1e-6, affine=True
+    )
+
+
+def Normalize(in_channels, num_groups=32):
+    return torch.nn.GroupNorm(
+        num_groups=num_groups, num_channels=in_channels, eps=1e-6, affine=True
     )
 
 

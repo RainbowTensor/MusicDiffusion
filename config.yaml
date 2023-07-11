@@ -24,13 +24,13 @@ autoencoder:
     learning_rate: 0.0001
     logger_kwargs:
       entity: rainbow_tensor
-      id: cszwyxrl
+      id: 
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 500
-    mixed_precision: 'no'
+    mixed_precision: fp16
     num_epochs: 50
-    resume: true
+    resume: false
     save_dir: ./models
     save_name: autoencoder
 music_diffusion:

@@ -1,13 +1,20 @@
 autoencoder:
   class: VQModel
   model:
-    bottleneck_blocks: 32
-    c_hidden: 640
-    c_in: 2
-    c_latent: 4
-    c_out: 2
-    codebook_size: 2048
-    levels: 4
+    ch: 128
+    in_channels: 2
+    out_channels: 2
+    z_channels: 4
+    num_res_blocks: 3
+    resolution: 256
+    attn_resolutions: 
+    n_embed: 2048
+    embed_dim: 32
+    channel_mult:
+      -1
+      -2
+      -4
+      -8
   train:
     batch_size: 8
     checkpoint_every: 1000

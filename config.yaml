@@ -2,7 +2,7 @@ autoencoder:
   class: VQModel
   model:
     bottleneck_blocks: 32
-    c_hidden: 480
+    c_hidden: 640
     c_in: 2
     c_latent: 4
     c_out: 2
@@ -17,7 +17,7 @@ autoencoder:
     learning_rate: 0.0001
     logger_kwargs:
       entity: rainbow_tensor
-      id: ggwxtnbl
+      id: cszwyxrl
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 500

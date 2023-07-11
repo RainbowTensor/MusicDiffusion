@@ -9,7 +9,7 @@ import numpy as np
 import os
 
 from dataset import LakhPrmat2cLMDB
-from autoencoder.autoencoder import Autoencoder
+from movq.autoencoder import Autoencoder
 
 
 with open("./config.yaml", "r") as f:

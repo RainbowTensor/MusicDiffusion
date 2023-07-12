@@ -1,20 +1,21 @@
 autoencoder:
   class: VQModel
   model:
-    ch: 128
-    in_channels: 2
-    out_channels: 2
-    z_channels: 4
-    num_res_blocks: 3
-    resolution: 256
-    attn_resolutions: 
-    n_embed: 2048
-    embed_dim: 32
+    attn_resolutions:
+    - -1
+    ch: 64
     channel_mult:
-      -1
-      -2
-      -4
-      -8
+    - 1
+    - 2
+    - 3
+    - 4
+    embed_dim: 32
+    in_channels: 2
+    n_embed: 2048
+    num_res_blocks: 3
+    out_channels: 2
+    resolution: 256
+    z_channels: 4
   train:
     batch_size: 8
     checkpoint_every: 1000
@@ -36,30 +37,30 @@ autoencoder:
 music_diffusion:
   class: MusicDiffusion
   model:
-    c_in: 4
-    c_out: 4
-    c_r: 64
-    patch_size: 2
+    blocks:
+    - 6
+    - 14
+    - 6
     c_cond: 0
     c_hidden:
     - 512
     - 1024
     - 1024
-    nhead:
-    - -1
-    - 16
-    - 16
-    blocks:
-    - 6
-    - 14
-    - 6
+    c_in: 4
+    c_out: 4
+    c_r: 64
+    dropout: 0.1
+    kernel_size: 3
     level_config:
     - CT
     - CTA
     - CTA
     n_class_cond: 6
-    kernel_size: 3
-    dropout: 0.1
+    nhead:
+    - -1
+    - 16
+    - 16
+    patch_size: 2
   train:
     batch_size: 4
     checkpoint_every: 1000
@@ -69,7 +70,7 @@ music_diffusion:
     learning_rate: 0.0001
     logger_kwargs:
       entity: rainbow_tensor
-      id: 
+      id: null
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 500

@@ -71,7 +71,19 @@ class SpatialNorm(nn.Module):
         return new_f
 
 
-def Normalize(in_channels, zq_ch, add_conv, num_groups=32):
+class GroupNorm(nn.Module):
+    def __init__(self, num_channels, num_groups=32, eps=1e-6, affine=True):
+        super().__init__()
+        self.norm = nn.GroupNorm(
+            num_groups=num_groups, num_channels=num_channels, eps=1e-6, affine=True
+        )
+
+    def forward(self, x, zq=None):
+        return self.norm(x)
+
+
+
+def Normalize(in_channels, zq_ch=None, add_conv=False, num_groups=32):
     if zq_ch:
         return SpatialNorm(
             in_channels,
@@ -84,7 +96,7 @@ def Normalize(in_channels, zq_ch, add_conv, num_groups=32):
             affine=True,
         )
     
-    return torch.nn.GroupNorm(
+    return GroupNorm(
         num_groups=num_groups, num_channels=in_channels, eps=1e-6, affine=True
     )
 
@@ -164,7 +176,7 @@ class ResnetBlock(nn.Module):
                     in_channels, out_channels, kernel_size=1, stride=1, padding=0
                 )
 
-    def forward(self, x, temb, zq):
+    def forward(self, x, temb, zq=None):
         h = x
         h = self.norm1(h, zq)
         h = nonlinearity(h)
@@ -206,7 +218,7 @@ class AttnBlock(nn.Module):
             in_channels, in_channels, kernel_size=1, stride=1, padding=0
         )
 
-    def forward(self, x, zq):
+    def forward(self, x, zq=None):
         h_ = x
         h_ = self.norm(h_, zq)
         q = self.q(h_)

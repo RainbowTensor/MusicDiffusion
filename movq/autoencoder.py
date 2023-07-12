@@ -31,7 +31,8 @@ class Autoencoder(nn.Module):
         return dec_onset, dec_duration
 
     def from_latent(self, encoded):
-        quant, _, _ = self.model.quantize(encoded, dim=1)
+        encoded_conv = self.model.quant_conv(encoded)
+        quant, _, _ = self.model.quantize(encoded_conv)
         dec = self.decode(quant, sigmoid=True)
 
         return self._treshold_result(dec)

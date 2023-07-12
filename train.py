@@ -41,6 +41,11 @@ train_dataloader = DataLoader(
 
 model = Autoencoder(autoencoder_config)
 
+total_params = sum(p.numel() for p in model.parameters())
+
+print(f"Model has {total_params} params")
+
+
 if train_config["resume"]:
     assert logger_kwargs["id"] is not None, \
         "When resuming training, WandB run ID should be set."

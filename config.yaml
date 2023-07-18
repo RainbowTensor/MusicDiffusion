@@ -2,13 +2,13 @@ autoencoder:
   class: VQModel
   model:
     attn_resolutions:
-    - -1
+    - 32
     ch: 64
     channel_mult:
-    - 1
     - 2
-    - 3
     - 4
+    - 4
+    - 8
     embed_dim: 32
     in_channels: 2
     n_embed: 2048
@@ -17,15 +17,15 @@ autoencoder:
     resolution: 256
     z_channels: 4
   train:
-    batch_size: 8
+    batch_size: 16
     checkpoint_every: 1000
     data_path: ../data/lakh_giant_midi_prmat2c_8bin_lmdb
     gradient_accumulation_steps: 2
     gradient_clip_val: 1.0
-    learning_rate: 0.0001
+    learning_rate: 0.00002
     logger_kwargs:
       entity: rainbow_tensor
-      id: 
+      id:
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 500

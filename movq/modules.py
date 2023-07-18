@@ -232,6 +232,9 @@ class AttnBlock(nn.Module):
         k = k.reshape(b, c, h * w)  # b,c,hw
         w_ = torch.bmm(q, k)  # b,hw,hw    w[b,i,j]=sum_c q[b,i,c]k[b,c,j]
         w_ = w_ * (int(c) ** (-0.5))
+        if torch.isinf(w_).any():
+            clamp_value = torch.finfo(w_.dtype).max - 1000
+            w_ = torch.clamp(w_, min=-clamp_value, max=clamp_value)
         w_ = torch.nn.functional.softmax(w_, dim=2)
 
         # attend to values

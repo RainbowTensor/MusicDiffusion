@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .modules import VQModel
+from .modules import Autoencoder1D
 import numpy as np
 
 
@@ -10,10 +10,10 @@ class Autoencoder(nn.Module):
         super().__init__()
 
         self.config = config
-        self.model = VQModel(**config["model"])
+        self.model = Autoencoder1D(**config["model"])
 
     def encode(self, x):
-        (encoded, quantized), commit_loss, indices = self.model.encode(x)
+        encoded, quantized, commit_loss = self.model.encode(x)
 
         self.assert_not_nan(encoded, "encoded")
         self.assert_not_nan(quantized, "quantized")
@@ -31,7 +31,8 @@ class Autoencoder(nn.Module):
         return dec_onset, dec_duration
 
     def from_latent(self, encoded):
-        quant, _, _ = self.model.vqmodule(encoded, dim=1)
+        encoded_conv = self.model.quant_conv(encoded)
+        quant, _, _ = self.model.quantize(encoded_conv)
         dec = self.decode(quant, sigmoid=True)
 
         return self._treshold_result(dec)

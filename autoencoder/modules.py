@@ -171,7 +171,7 @@ class AttnBlock(nn.Module):
         k = self.k(h_)
         v = self.v(h_)
     
-        if self.dim == 1:
+        if self.dim == 2:
             b, c, h, w = q.shape
         else:
             b, c, w = q.shape
@@ -194,7 +194,9 @@ class AttnBlock(nn.Module):
         v = v.reshape(b, c, h * w)
         w_ = w_.permute(0, 2, 1)  # b,hw,hw (first hw of k, second of q)
         h_ = torch.bmm(v, w_)  # b, c,hw (hw of q) h_[b,c,j] = sum_i v[b,c,i] w_[b,i,j]
-        h_ = h_.reshape(b, c, h, w)
+        
+        if self.dim == 2:
+            h_ = h_.reshape(b, c, h, w)
 
         h_ = self.proj_out(h_)
 
@@ -286,6 +288,7 @@ class Encoder(nn.Module):
         # end
         self.norm_out = Normalize(block_in)
         self.conv_out = conv_nd(
+            dim,
             block_in,
             2 * z_channels if double_z else z_channels,
             kernel_size=3,
@@ -359,7 +362,7 @@ class Decoder(nn.Module):
 
         # z to block_in
         self.conv_in = conv_nd(
-            dim, 1, block_in, kernel_size=3, stride=1, padding=1
+            dim, 32, block_in, kernel_size=3, stride=1, padding=1
         )
 
         # middle
@@ -450,8 +453,8 @@ class Decoder(nn.Module):
 
         h = self.norm_out(h)
         h = nonlinearity(h)
-        out_onset = self.conv_out_onset(h).permute(0, 1, 3, 2)
-        out_dur = self.conv_out_dur(h).permute(0, 1, 3, 2)
+        out_onset = self.conv_out_onset(h)#.permute(0, 1, 3, 2)
+        out_dur = self.conv_out_dur(h)#.permute(0, 1, 3, 2)
 
         return out_onset, out_dur
     
@@ -509,6 +512,7 @@ class Autoencoder1D(nn.Module):
 
         self.quant_conv = conv_nd(1, z_channels, embed_dim, 1)
         self.post_quant_conv = conv_nd(1, embed_dim, z_channels, 1)
+        self.to_2d = conv_nd(1, z_channels, 32 * 32, 1)
 
     def encode(self, x):
         encoded = F.normalize(self.encoder(x))
@@ -520,8 +524,12 @@ class Autoencoder1D(nn.Module):
         return encoded, quant, emb_loss
 
     def decode(self, quant):
-        quant2 = self.post_quant_conv(quant)
-        dec = self.decoder(quant2[:, None, :, :])
+        quant = self.post_quant_conv(quant)
+
+        b, c, w = quant.shape
+
+        quant = self.to_2d(quant).reshape([b, -1, 32, w]).permute(0, 1, 3, 2)
+        dec = self.decoder(quant)
         return dec
 
     def decode_code(self, code_b):

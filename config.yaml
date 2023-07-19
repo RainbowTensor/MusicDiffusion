@@ -7,10 +7,10 @@ autoencoder:
     channel_mult:
     - 2
     - 4
-    - 4
     - 8
+    - 16
     embed_dim: 32
-    in_channels: 2
+    in_channels: 128
     n_embed: 2048
     num_res_blocks: 3
     out_channels: 2

@@ -322,8 +322,8 @@ class Decoder(nn.Module):
 
         h = self.norm_out(h)
         h = nonlinearity(h)
-        out_onset = self.conv_out_onset(h)#.permute(0, 1, 3, 2)
-        out_dur = self.conv_out_duration(h)#.permute(0, 1, 3, 2)
+        out_onset = self.conv_out_onset(h).permute(0, 2, 1)
+        out_dur = self.conv_out_duration(h).permute(0, 2, 1)
 
         return out_onset, out_dur
     

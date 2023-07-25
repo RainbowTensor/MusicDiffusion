@@ -61,15 +61,11 @@ class Autoencoder(nn.Module):
     def compute_loss(self, input, output, use_weight=False):
         pred_onsets, pred_durations = output
 
-        onsets_label = input[:, 0, :, :][:, None, :, :]
-        duration_label = input[:, 1, :, :][:, None, :, :]
+        onset, duration = torch.chunk(input, 2, dim=1)
+        onset, duration = onset.squeeze(1), duration.squeeze(1)
 
-        ce_onset = self._compute_bce_loss_with_weight(
-            pred_onsets, onsets_label, use_weight
-        )
-        ce_duration = self._compute_bce_loss_with_weight(
-            pred_durations, duration_label, use_weight
-        )
+        ce_onset = F.binary_cross_entropy_with_logits(pred_onsets, onset)
+        ce_duration = F.binary_cross_entropy_with_logits(pred_durations, duration)
 
         return (ce_onset + ce_duration)
 

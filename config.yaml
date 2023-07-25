@@ -1,21 +1,16 @@
 autoencoder:
-  class: VQModel
+  class: Autoencoder1D
   model:
-    attn_resolutions:
-    - 32
-    ch: 64
-    channel_mult:
-    - 2
-    - 4
-    - 8
-    - 16
-    embed_dim: 32
-    in_channels: 128
+    img_height: 128
+    in_channels: 2
+    embedding_channels: 16
+    block_out_channels: 
+    - 128
+    - 256
+    attn_per_block: 2
+    z_channels: 32
     n_embed: 2048
-    num_res_blocks: 3
-    out_channels: 2
-    resolution: 256
-    z_channels: 4
+    embed_dim: 32
   train:
     batch_size: 16
     checkpoint_every: 1000

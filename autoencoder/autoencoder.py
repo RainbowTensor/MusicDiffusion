@@ -107,10 +107,13 @@ class Autoencoder(nn.Module):
     def _treshold_result(self, predicted):
         onset, dur = predicted
 
-        onset_np = onset.detach().cpu().numpy()[:, 0, :, :]
-        dur_np = dur.detach().cpu().numpy()[:, 0, :, :]
+        onset_np = onset.detach().cpu().numpy()
+        dur_np = dur.detach().cpu().numpy()
 
-        recon_np = np.stack([onset_np, dur_np], axis=1)
+        recon_np = np.stack(
+            [onset_np[:, None, :, :], dur_np[:, None, :, :]], 
+            axis=1
+        )
 
         recon_np = np.where(
             recon_np > 0.87,

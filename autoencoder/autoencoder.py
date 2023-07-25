@@ -53,7 +53,7 @@ class Autoencoder(nn.Module):
         images, labes = batch
 
         dec, commit_loss = self(images)
-        loss = self.compute_loss(images, dec, use_weight=False)
+        loss = self.compute_loss(images, dec, use_weight=True)
         loss = loss + commit_loss
 
         return loss, commit_loss
@@ -61,44 +61,27 @@ class Autoencoder(nn.Module):
     def compute_loss(self, input, output, use_weight=False):
         pred_onsets, pred_durations = output
 
-        onset, duration = torch.chunk(input, 2, dim=1)
-        onset, duration = onset.squeeze(1), duration.squeeze(1)
+        onsets_label = input[:, 0, :, :]
+        duration_label = input[:, 1, :, :]
 
-        ce_onset = F.binary_cross_entropy_with_logits(pred_onsets, onset)
-        ce_duration = F.binary_cross_entropy_with_logits(pred_durations, duration)
+        ce_onset = self._compute_bce_loss_with_weight(
+            pred_onsets, onsets_label, use_weight
+        )
+        ce_duration = self._compute_bce_loss_with_weight(
+            pred_durations, duration_label, use_weight
+        )
 
         return (ce_onset + ce_duration)
 
     def _compute_bce_loss_with_weight(self, pred, label, use_weight=False):
-        label_not = torch.logical_not(label)
         sample_weight = 1
 
         if use_weight:
-            n_pos = label.sum((1, 2, 3))
-            n_neg = label_not.sum((1, 2, 3))
-
-            weight = (n_pos / n_neg).mean() * 8
-
-            weight_neg = torch.empty_like(label).fill_(weight)
-            weight_pos = torch.ones_like(label)
-
-            sample_weight_pos = torch.where(
+            sample_weight = torch.where(
                 label == 1,
-                weight_pos,
-                weight_neg
+                1.5,
+                0.5
             )
-
-            sample_weight_neg = torch.where(
-                label == 1,
-                weight_neg,
-                weight_pos
-            )
-
-            sample_weight = torch.concat(
-                [sample_weight_pos, sample_weight_neg], dim=1
-            )
-
-        label = torch.concat([label, label_not], dim=1)
 
         loss = F.binary_cross_entropy_with_logits(pred, label, reduction='none')
 

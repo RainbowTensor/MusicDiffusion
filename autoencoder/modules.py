@@ -313,8 +313,8 @@ class Decoder(nn.Module):
         self.up_modules = nn.Sequential(*up_modules)
 
         self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
-        self.conv_out_onset = conv_nd(1, block_out_channels[-1], img_height, 3, padding=1)
-        self.conv_out_duration = conv_nd(1, block_out_channels[-1], img_height, 3, padding=1)
+        self.conv_out_onset = nn.Linear(block_out_channels[-1], img_height)
+        self.conv_out_duration = nn.Linear( block_out_channels[-1], img_height)
 
     def forward(self, z):
         h = self.conv_in(z)
@@ -322,8 +322,9 @@ class Decoder(nn.Module):
 
         h = self.norm_out(h)
         h = nonlinearity(h)
-        out_onset = self.conv_out_onset(h).permute(0, 2, 1)
-        out_dur = self.conv_out_duration(h).permute(0, 2, 1)
+
+        out_onset = self.conv_out_onset(h.permute(0, 2, 1))
+        out_dur = self.conv_out_duration(h.permute(0, 2, 1))
 
         return out_onset, out_dur
     

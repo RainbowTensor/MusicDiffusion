@@ -75,7 +75,7 @@ class Downsample(nn.Module):
     def forward(self, x):
         if self.with_conv:
             pad = (0, 1) if self.dim == 1 else (0, 1, 0, 1)
-            x = torch.nn.functional.pad(x, pad, mode="constant", value=0)
+            x = F.pad(x, pad, mode="constant", value=0)
             x = self.conv(x)
         else:
             x = self.avg_pool(x)
@@ -206,119 +206,68 @@ class AttnBlock(nn.Module):
 class Encoder(nn.Module):
     def __init__(
         self,
-        ch,
-        in_channels,
-        z_channels,
-        num_res_blocks,
-        resolution,
-        attn_resolutions,
-        channel_mult=(1, 2, 4, 8),
-        resamp_with_conv=True,
-        double_z=False,
-        dim=1,
-        dropout=0.0,
+        img_height=128,
+        in_channels=2,
+        embedding_channels=16,
+        block_out_channels=[128, 256],
+        attn_per_block=2,
+        z_channels=32,
+        dropout=0.1,
     ):
         super().__init__()
-        self.ch = ch
-        self.temb_ch = 0
-        self.num_resolutions = len(channel_mult)
-        self.num_res_blocks = num_res_blocks
-        self.resolution = resolution
-        self.in_channels = in_channels
 
-        # downsampling
-        self.onset_conv_in = conv_nd(
-            dim, in_channels, self.ch, kernel_size=3, stride=1, padding=1
+        self.embed = nn.Sequential(
+            conv_nd(2, in_channels, embedding_channels // 2, 3, padding=1),
+            nn.GELU(),
+            conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
         )
 
-        self.duration_conv_in = conv_nd(
-            dim, in_channels, self.ch, kernel_size=3, stride=1, padding=1
-        )
+        self.flatten_proj = nn.Conv1d(embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
 
-        self.conv_in = conv_nd(dim, self.ch, self.ch, 1)
+        down_modules = []
+        for block_channels in block_out_channels:
+            block_in_channels = block_channels // 2
+            down_modules.append(
+                Downsample(in_channels=block_in_channels, with_conv=True, dim=1)
+            )
 
-        curr_res = resolution
-        in_ch_mult = (1,) + tuple(channel_mult)
-        self.in_ch_mult = in_ch_mult
-        self.down = nn.ModuleList()
-        for i_level in range(self.num_resolutions):
-            block = nn.ModuleList()
-            attn = nn.ModuleList()
-            block_in = ch * in_ch_mult[i_level]
-            block_out = ch * channel_mult[i_level]
-            for i_block in range(self.num_res_blocks):
-                block.append(
-                    ResnetBlock(
-                        in_channels=block_in,
-                        out_channels=block_out,
-                        temb_channels=self.temb_ch,
-                        dropout=dropout,
-                        dim=dim
-                    )
+            down_modules.append(
+                ResnetBlock(
+                    in_channels=block_in_channels,
+                    out_channels=block_channels,
+                    dim=1,
+                    dropout=dropout
                 )
-                block_in = block_out
-                if curr_res in attn_resolutions:
-                    attn.append(AttnBlock(block_in, dim=dim))
-            down = nn.Module()
-            down.block = block
-            down.attn = attn
-            if i_level != self.num_resolutions - 1:
-                down.downsample = Downsample(block_in, resamp_with_conv, dim=dim)
-                curr_res = curr_res // 2
-            self.down.append(down)
+            )
 
-        # middle
-        self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(
-            in_channels=block_in,
-            out_channels=block_in,
-            temb_channels=self.temb_ch,
-            dropout=dropout,
-            dim=dim,
-        )
-        self.mid.attn_1 = AttnBlock(block_in, dim=dim)
-        self.mid.block_2 = ResnetBlock(
-            in_channels=block_in,
-            out_channels=block_in,
-            temb_channels=self.temb_ch,
-            dropout=dropout,
-            dim=dim
-        )
+            down_modules.extend(
+                [
+                    AttnBlock(in_channels=block_channels, add_conv=False, dim=1)
+                    for _ in range(attn_per_block)
+                ]
+            )
 
-        # end
-        self.norm_out = Normalize(block_in)
-        self.conv_out = conv_nd(
-            dim,
-            block_in,
-            2 * z_channels if double_z else z_channels,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-        )
 
-    def forward(self, x, temb=None):
-        onset, duration = torch.chunk(x, 2, dim=1)
-        onset, duration = onset.squeeze(1).permute(0, 2, 1), duration.squeeze(1).permute(0, 2, 1)
+        self.down_modules = nn.Sequential(*down_modules)
 
-        h_onset = self.onset_conv_in(onset)
-        h_duration = self.duration_conv_in(onset)
+        self.norm_out = Normalize(block_out_channels[-1])
+        self.conv_out = conv_nd(1, block_out_channels[-1], z_channels, 3, padding=1)
 
-        # downsampling
-        hs = [self.conv_in(h_onset + h_duration)]
-        for i_level in range(self.num_resolutions):
-            for i_block in range(self.num_res_blocks):
-                h = self.down[i_level].block[i_block](hs[-1], temb)
-                if len(self.down[i_level].attn) > 0:
-                    h = self.down[i_level].attn[i_block](h)
-                hs.append(h)
-            if i_level != self.num_resolutions - 1:
-                hs.append(self.down[i_level].downsample(hs[-1]))
+    def forward(self, x):
+        #onset, duration = torch.chunk(x, 2, dim=1)
+        #onset, duration = onset.squeeze(1).permute(0, 2, 1), duration.squeeze(1).permute(0, 2, 1)
 
-        # middle
-        h = hs[-1]
-        h = self.mid.block_1(h, temb)
-        h = self.mid.attn_1(h)
-        h = self.mid.block_2(h, temb)
+        #h_onset = self.onset_conv_in(onset)
+        #h_duration = self.duration_conv_in(onset)
+
+        x = x.permute(0, 1, 3, 2)
+        h = self.embed(x)
+
+        B, C, H, W = h.shape
+        h = h.reshape([B, C * H, W])
+
+        h = self.flatten_proj(h)
+        h = self.down_modules(h)
 
         # end
         h = self.norm_out(h)
@@ -329,132 +278,52 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(
         self,
-        ch,
-        out_channels,
-        z_channels,
-        resolution,
-        num_res_blocks,
-        attn_resolutions,
-        channel_mult=(1, 2, 4, 8),
-        resamp_with_conv=True,
-        give_pre_end=False,
-        add_conv=False,
-        dim=2,
-        dropout=0.0,
+        img_height=128,
+        block_out_channels=[256, 128],
+        attn_per_block=2,
+        z_channels=32,
+        dropout=0.1,
     ):
         super().__init__()
-        self.ch = ch
-        self.temb_ch = 0
-        self.num_resolutions = len(channel_mult)
-        self.num_res_blocks = num_res_blocks
-        self.resolution = resolution
-        self.give_pre_end = give_pre_end
+        self.conv_in = conv_nd(1, z_channels, block_out_channels[0], 3, padding=1)
 
-        # compute in_ch_mult, block_in and curr_res at lowest res
-        block_in = ch * channel_mult[self.num_resolutions - 1]
-        curr_res = resolution // 2 ** (self.num_resolutions - 1)
-        self.z_shape = (1, z_channels, curr_res)
-        print(
-            "Working with z of shape {} = {} dimensions.".format(
-                self.z_shape, np.prod(self.z_shape)
+        up_modules = []
+        for i, block_channels in enumerate(block_out_channels):
+            block_in_channels = block_channels if i == 0 else block_channels * 2 
+            up_modules.append(
+                Upsample(in_channels=block_in_channels, with_conv=True, dim=1)
             )
-        )
 
-        # z to block_in
-        self.conv_in = conv_nd(
-            dim, 32, block_in, kernel_size=3, stride=1, padding=1
-        )
-
-        # middle
-        self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(
-            in_channels=block_in,
-            out_channels=block_in,
-            temb_channels=self.temb_ch,
-            dropout=dropout,
-            add_conv=add_conv,
-            dim=dim
-        )
-        self.mid.attn_1 = AttnBlock(block_in, add_conv=add_conv, dim=dim)
-        self.mid.block_2 = ResnetBlock(
-            in_channels=block_in,
-            out_channels=block_in,
-            temb_channels=self.temb_ch,
-            dropout=dropout,
-            add_conv=add_conv,
-            dim=dim
-        )
-
-        # upsampling
-        self.up = nn.ModuleList()
-        for i_level in reversed(range(self.num_resolutions)):
-            block = nn.ModuleList()
-            attn = nn.ModuleList()
-            block_out = ch * channel_mult[i_level]
-            for i_block in range(self.num_res_blocks + 1):
-                block.append(
-                    ResnetBlock(
-                        in_channels=block_in,
-                        out_channels=block_out,
-                        temb_channels=self.temb_ch,
-                        dropout=dropout,
-                        add_conv=add_conv,
-                        dim=dim
-                    )
+            up_modules.append(
+                ResnetBlock(
+                    in_channels=block_in_channels,
+                    out_channels=block_channels,
+                    dim=1,
+                    dropout=dropout
                 )
-                block_in = block_out
-                if curr_res in attn_resolutions:
-                    attn.append(AttnBlock(block_in, add_conv=add_conv, dim=dim))
-            up = nn.Module()
-            up.block = block
-            up.attn = attn
-            if i_level != 0:
-                up.upsample = Upsample(block_in, resamp_with_conv, dim=dim)
-                curr_res = curr_res * 2
-            self.up.insert(0, up)  # prepend to get consistent order
+            )
 
-        # end
-        self.norm_out = Normalize(block_in, add_conv=add_conv)
+            up_modules.extend(
+                [
+                    AttnBlock(in_channels=block_channels, add_conv=False, dim=1)
+                    for _ in range(attn_per_block)
+                ]
+            )
 
-        self.conv_out_onset = conv_nd(
-            dim, block_in, out_channels, kernel_size=3, stride=1, padding=1
-        )
-        self.conv_out_dur = conv_nd(
-            dim, block_in, out_channels, kernel_size=3, stride=1, padding=1
-        )
+        self.up_modules = nn.Sequential(*up_modules)
+
+        self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
+        self.conv_out_onset = conv_nd(1, block_out_channels[-1], img_height, 3, padding=1)
+        self.conv_out_duration = conv_nd(1, block_out_channels[-1], img_height, 3, padding=1)
 
     def forward(self, z):
-        # assert z.shape[1:] == self.z_shape[1:]
-        self.last_z_shape = z.shape
-
-        # timestep embedding
-        temb = None
-
-        # z to block_in
         h = self.conv_in(z)
-
-        # middle
-        h = self.mid.block_1(h, temb)
-        h = self.mid.attn_1(h)
-        h = self.mid.block_2(h, temb)
-
-        # upsampling
-        for i_level in reversed(range(self.num_resolutions)):
-            for i_block in range(self.num_res_blocks + 1):
-                h = self.up[i_level].block[i_block](h, temb)
-                if len(self.up[i_level].attn) > 0:
-                    h = self.up[i_level].attn[i_block](h)
-            if i_level != 0:
-                h = self.up[i_level].upsample(h)
-
-        # end
-        if self.give_pre_end:
-            return h
+        h = self.up_modules(h)
 
         h = self.norm_out(h)
         h = nonlinearity(h)
         out_onset = self.conv_out_onset(h)#.permute(0, 1, 3, 2)
-        out_dur = self.conv_out_dur(h)#.permute(0, 1, 3, 2)
+        out_dur = self.conv_out_duration(h)#.permute(0, 1, 3, 2)
 
         return out_onset, out_dur
     
@@ -462,48 +331,34 @@ class Decoder(nn.Module):
 class Autoencoder1D(nn.Module):
     def __init__(
         self,
-        ch,
-        in_channels,
-        out_channels,
-        z_channels,
-        num_res_blocks,
-        resolution,
-        attn_resolutions,
-        n_embed,
-        embed_dim,
-        channel_mult=(1, 2, 4, 8),
-        resamp_with_conv=True,
-        give_pre_end=False,
-        add_conv=False,
+        img_height=128,
+        in_channels=2,
+        embedding_channels=16,
+        block_out_channels=[128, 256],
+        attn_per_block=2,
+        z_channels=32,
+        n_embed=2048,
+        embed_dim=32,
         dropout=0.1,
     ):
         super().__init__()
 
         self.encoder = Encoder(
-            ch=ch,
+            img_height=img_height,
             in_channels=in_channels,
+            embedding_channels=embedding_channels,
+            block_out_channels=block_out_channels,
+            attn_per_block=attn_per_block,
             z_channels=z_channels,
-            num_res_blocks=num_res_blocks,
-            resolution=resolution,
-            attn_resolutions=attn_resolutions,
-            channel_mult=channel_mult,
-            resamp_with_conv=resamp_with_conv,
             dropout=dropout,
-            dim=1
         )
 
         self.decoder = Decoder(
-            ch=ch,
-            out_channels=out_channels,
+            img_height=img_height,
+            block_out_channels=list(reversed(block_out_channels)),
+            attn_per_block=attn_per_block,
             z_channels=z_channels,
-            resolution=resolution,
-            num_res_blocks=num_res_blocks,
-            attn_resolutions=attn_resolutions,
-            channel_mult=channel_mult,
-            give_pre_end=give_pre_end,
-            add_conv=add_conv,
             dropout=dropout,
-            dim=2
         )
 
         self.quantize = VectorQuantizer(
@@ -512,7 +367,6 @@ class Autoencoder1D(nn.Module):
 
         self.quant_conv = conv_nd(1, z_channels, embed_dim, 1)
         self.post_quant_conv = conv_nd(1, embed_dim, z_channels, 1)
-        self.to_2d = conv_nd(1, z_channels, 32 * 32, 1)
 
     def encode(self, x):
         encoded = F.normalize(self.encoder(x))
@@ -525,10 +379,6 @@ class Autoencoder1D(nn.Module):
 
     def decode(self, quant):
         quant = self.post_quant_conv(quant)
-
-        b, c, w = quant.shape
-
-        quant = self.to_2d(quant).reshape([b, -1, 32, w]).permute(0, 1, 3, 2)
         dec = self.decoder(quant)
         return dec
 

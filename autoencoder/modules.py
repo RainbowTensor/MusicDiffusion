@@ -142,6 +142,27 @@ class ResnetBlock(nn.Module):
                 x = self.nin_shortcut(x)
 
         return x + h
+    
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        Arguments:
+            x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
+        """
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
 
 
 class AttnBlock(nn.Module):
@@ -222,7 +243,8 @@ class Encoder(nn.Module):
             conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
         )
 
-        self.flatten_proj = nn.Conv1d(embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
+        self.flatten_proj = conv_nd(1, embedding_channels * img_height, block_out_channels[0] // 2, 1)
+        self.pos_encoding = PositionalEncoding(block_out_channels[0] // 2)
 
         down_modules = []
         for block_channels in block_out_channels:
@@ -247,11 +269,10 @@ class Encoder(nn.Module):
                 ]
             )
 
-
         self.down_modules = nn.Sequential(*down_modules)
 
         self.norm_out = Normalize(block_out_channels[-1])
-        self.conv_out = conv_nd(1, block_out_channels[-1], z_channels, 3, padding=1)
+        self.conv_out = conv_nd(1, block_out_channels[-1], z_channels, 1)
 
     def forward(self, x):
         #onset, duration = torch.chunk(x, 2, dim=1)
@@ -267,7 +288,9 @@ class Encoder(nn.Module):
         h = h.reshape([B, C * H, W])
 
         h = self.flatten_proj(h)
-        h = self.down_modules(h)
+        h = self.pos_encoding(h.permute(2, 0, 1))
+        
+        h = self.down_modules(h.permute(1, 2, 0))
 
         # end
         h = self.norm_out(h)

@@ -14,7 +14,7 @@ def nonlinearity(x):
 
 
 def Normalize(in_channels, add_conv=False, num_groups=32):   
-    return nn.BatchNorm1d(num_features=in_channels)
+    return nn.LayerNorm(in_channels)
 
 
 def FeedForward(dim, out_dim=None, mult=4, dropout=0.):
@@ -38,9 +38,8 @@ class LinearDownsample(nn.Module):
         self.shorten_factor = shorten_factor
 
     def forward(self, x):
-        x = x.permute(0, 2, 1)
-        x = rearrange(x, 'b (n s) d -> b n (s d)', s = self.shorten_factor)
-        return self.proj(x).permute(0, 2, 1)
+        x = rearrange(x, 'b (n s) d -> b n (s d)', s=self.shorten_factor)
+        return self.proj(x)
 
 
 class LinearUpsample(nn.Module):
@@ -50,9 +49,8 @@ class LinearUpsample(nn.Module):
         self.shorten_factor = shorten_factor
 
     def forward(self, x):
-        x = x.permute(0, 2, 1)
         x = self.proj(x)
-        return rearrange(x, 'b n (s d) -> b (n s) d', s = self.shorten_factor).permute(0, 2, 1)
+        return rearrange(x, 'b n (s d) -> b (n s) d', s=self.shorten_factor)
 
 
 class PreNormResidual(nn.Module):
@@ -110,7 +108,7 @@ class Transformer(nn.Module):
         depth=8,
         heads=8,
         dropout=0.,
-        ff_mult=4,
+        ff_mult=2,
     ):
         super().__init__()
 
@@ -162,6 +160,7 @@ class Encoder(nn.Module):
         attn_per_block=2,
         z_channels=32,
         dropout=0.1,
+        ff_mult=2
     ):
         super().__init__()
 
@@ -173,7 +172,7 @@ class Encoder(nn.Module):
             conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
         )
 
-        self.flatten_proj = FeedForward(embedding_channels * img_height, out_dim=block_out_channels[0] // 2)
+        self.flatten_proj = FeedForward(dim=embedding_channels * img_height, out_dim=block_out_channels[0] // 2, mult=ff_mult)
         self.pos_encoding = PositionalEncoding(block_out_channels[0] // 2)
 
         down_modules = []
@@ -187,6 +186,7 @@ class Encoder(nn.Module):
                 FeedForward(
                     dim=block_in_channels,
                     out_dim=block_channels,
+                    mult=ff_mult,
                     dropout=dropout
                 )
             )
@@ -195,6 +195,7 @@ class Encoder(nn.Module):
                 Transformer(
                     dim=block_channels,
                     depth=attn_per_block,
+                    ff_mult=ff_mult,
                     dropout=dropout
                 )
             )
@@ -202,7 +203,7 @@ class Encoder(nn.Module):
         self.down_modules = nn.Sequential(*down_modules)
 
         self.norm_out = Normalize(block_out_channels[-1])
-        self.to_out = FeedForward(dim=block_out_channels[-1], out_dim=z_channels)
+        self.to_out = FeedForward(dim=block_out_channels[-1], out_dim=z_channels, mult=ff_mult)
 
     def forward(self, x):
         """
@@ -236,9 +237,10 @@ class Decoder(nn.Module):
         attn_per_block=2,
         z_channels=32,
         dropout=0.1,
+        ff_mult=2
     ):
         super().__init__()
-        self.proj_in = FeedForward(dim=z_channels, out_dim=block_out_channels[0])
+        self.proj_in = FeedForward(dim=z_channels, out_dim=block_out_channels[0], mult=ff_mult)
 
         up_modules = []
         for i, block_channels in enumerate(block_out_channels):
@@ -252,6 +254,7 @@ class Decoder(nn.Module):
                 FeedForward(
                     dim=block_in_channels,
                     out_dim=block_channels,
+                    mult=ff_mult,
                     dropout=dropout
                 )
             )
@@ -260,6 +263,7 @@ class Decoder(nn.Module):
                 Transformer(
                     dim=block_channels,
                     depth=attn_per_block,
+                    ff_mult=ff_mult,
                     dropout=dropout
                 )
             )
@@ -267,8 +271,8 @@ class Decoder(nn.Module):
         self.up_modules = nn.Sequential(*up_modules)
 
         self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
-        self.conv_out_onset = FeedForward(dim=block_out_channels[-1], out_dim=img_height)
-        self.conv_out_duration = FeedForward(dim=block_out_channels[-1], out_dim=img_height)
+        self.conv_out_onset = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
+        self.conv_out_duration = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
 
     def forward(self, z):
         """
@@ -298,6 +302,7 @@ class Autoencoder1D(nn.Module):
         z_channels=32,
         n_embed=2048,
         embed_dim=32,
+        ff_mult=2,
         dropout=0.1,
     ):
         super().__init__()
@@ -309,6 +314,7 @@ class Autoencoder1D(nn.Module):
             block_out_channels=block_out_channels,
             attn_per_block=attn_per_block,
             z_channels=z_channels,
+            ff_mult=ff_mult,
             dropout=dropout,
         )
 
@@ -317,6 +323,7 @@ class Autoencoder1D(nn.Module):
             block_out_channels=list(reversed(block_out_channels)),
             attn_per_block=attn_per_block,
             z_channels=z_channels,
+            ff_mult=ff_mult,
             dropout=dropout,
         )
 
@@ -329,7 +336,7 @@ class Autoencoder1D(nn.Module):
 
     def encode(self, x):
         encoded = F.normalize(self.encoder(x))
-        encoded_conv = self.quant_conv(encoded)
+        encoded_conv = self.quant_conv(encoded.permute(0, 2, 1))
 
         quant, emb_loss, info = self.quantize(encoded_conv[:, :, None, :])
         quant = quant.squeeze(2)
@@ -338,7 +345,7 @@ class Autoencoder1D(nn.Module):
 
     def decode(self, quant):
         quant = self.post_quant_conv(quant)
-        dec = self.decoder(quant)
+        dec = self.decoder(quant.permute(0, 2, 1))
         return dec
 
     def decode_code(self, code_b):

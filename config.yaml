@@ -1,12 +1,13 @@
 autoencoder:
   class: Autoencoder1D
   model:
-    attn_per_block: 16
+    attn_per_block: 8
     block_out_channels:
     - 256
     - 512
+    ff_mult: 4
     embed_dim: 32
-    embedding_channels: 128
+    embedding_channels: 16
     img_height: 128
     in_channels: 2
     n_embed: 2048
@@ -23,7 +24,7 @@ autoencoder:
       id:
       log_model: all
       project: music_diffusion
-    lr_warmup_steps: 500
+    lr_warmup_steps: 2000
     mixed_precision: 'no'
     num_epochs: 50
     resume: false

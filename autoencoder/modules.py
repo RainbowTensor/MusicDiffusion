@@ -41,6 +41,47 @@ def Normalize(in_channels, add_conv=False, num_groups=32):
     )
 
 
+class Upsample(nn.Module):
+    def __init__(self, in_channels, with_conv, dim=2):
+        super().__init__()
+        self.with_conv = with_conv
+        if self.with_conv:
+            self.conv = conv_nd(
+                dim, in_channels, in_channels, kernel_size=3, stride=1, padding=1
+            )
+
+    def forward(self, x):
+        x = F.interpolate(x, scale_factor=2.0, mode="nearest")
+        if self.with_conv:
+            x = self.conv(x)
+        return x
+
+
+class Downsample(nn.Module):
+    def __init__(self, in_channels, with_conv, dim=2):
+        super().__init__()
+        self.with_conv = with_conv
+        self.dim = dim
+        if self.with_conv:
+            # no asymmetric padding in torch conv, must do it ourselves
+            self.conv = conv_nd(
+                dim, in_channels, in_channels, kernel_size=3, stride=2, padding=0
+            )
+
+        self.avg_pool = avg_pool_nd(
+            dim, kernel_size=2, stride=2
+        )
+
+    def forward(self, x):
+        if self.with_conv:
+            pad = (0, 1) if self.dim == 1 else (0, 1, 0, 1)
+            x = F.pad(x, pad, mode="constant", value=0)
+            x = self.conv(x)
+        else:
+            x = self.avg_pool(x)
+        return x
+    
+
 class FeedForward(nn.Module):
     def __init__(self, dim, out_dim=None, dropout=0.):
         super().__init__()
@@ -85,26 +126,6 @@ class PositionalEncoding(nn.Module):
         """
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
-    
-
-class PatchMerger(nn.Module):
-    def __init__(self, dim, num_tokens_out):
-        super().__init__()
-        self.scale = dim ** -0.5
-        self.norm = nn.LayerNorm(dim)
-        self.queries = nn.Parameter(torch.randn(num_tokens_out, dim))
-
-    def forward(self, x):
-        """
-        Arguments:
-            x: Tensor, shape ``[batch_size, embedding_dim, seq_len]``
-        """
-        x = x.permute(0, 2, 1)
-        x = self.norm(x)
-        sim = torch.matmul(self.queries, x.transpose(-1, -2)) * self.scale
-        attn = sim.softmax(dim = -1)
-
-        return torch.matmul(attn, x).permute(0, 2, 1)
 
 
 class AttnBlock(nn.Module):
@@ -170,7 +191,6 @@ class Encoder(nn.Module):
     def __init__(
         self,
         img_height=128,
-        seq_len=256,
         in_channels=2,
         embedding_channels=16,
         block_out_channels=[128, 256],
@@ -189,13 +209,11 @@ class Encoder(nn.Module):
         self.flatten_proj = nn.Conv1d(embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
         self.pos_encoding = PositionalEncoding(block_out_channels[0] // 2)
 
-        num_tokens_out = seq_len
         down_modules = []
         for block_channels in block_out_channels:
             block_in_channels = block_channels // 2
-            num_tokens_out = num_tokens_out // 2
             down_modules.append(
-                PatchMerger(block_in_channels, num_tokens_out=num_tokens_out)
+                Downsample(in_channels=block_in_channels, with_conv=True, dim=1)
             )
 
             down_modules.append(
@@ -253,18 +271,14 @@ class Decoder(nn.Module):
         dropout=0.1,
     ):
         super().__init__()
-        
-        seq_len_downsampled = seq_len / 2 ** len(block_out_channels)
         self.conv_in = conv_nd(1, z_channels, block_out_channels[0], 3, padding=1)
 
-        num_tokens_out = seq_len_downsampled
         up_modules = []
         for i, block_channels in enumerate(block_out_channels):
-            block_in_channels = block_channels if i == 0 else block_channels * 2
-            num_tokens_out = num_tokens_out * 2
+            block_in_channels = block_channels if i == 0 else int(block_channels * 2)
 
             up_modules.append(
-                PatchMerger(block_in_channels, num_tokens_out=num_tokens_out)
+                Upsample(in_channels=block_in_channels, with_conv=True, dim=1)
             )
 
             up_modules.append(
@@ -285,8 +299,8 @@ class Decoder(nn.Module):
         self.up_modules = nn.Sequential(*up_modules)
 
         self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
-        self.conv_out_onset = FeedForward(block_out_channels[-1], out_dim=img_height, dropout=dropout)
-        self.conv_out_duration = FeedForward( block_out_channels[-1], out_dim=img_height, dropout=dropout)
+        self.conv_out_onset = FeedForward(block_out_channels[-1], out_dim=img_height)
+        self.conv_out_duration = FeedForward(block_out_channels[-1], out_dim=img_height)
 
     def forward(self, z):
         h = self.conv_in(z)
@@ -295,8 +309,8 @@ class Decoder(nn.Module):
         h = self.norm_out(h)
         h = nonlinearity(h)
 
-        out_onset = self.conv_out_onset(h)
-        out_dur = self.conv_out_duration(h)
+        out_onset = self.conv_out_onset(h.permute(0, 2, 1))
+        out_dur = self.conv_out_duration(h.permute(0, 2, 1))
 
         return out_onset, out_dur
     

@@ -38,45 +38,25 @@ def Normalize(in_channels, add_conv=False, num_groups=32):
     return nn.BatchNorm1d(num_features=in_channels)
 
 
-class Upsample(nn.Module):
-    def __init__(self, in_channels, with_conv, dim=2):
+class LinearDownsample(nn.Module):
+    def __init__(self, dim, shorten_factor):
         super().__init__()
-        self.with_conv = with_conv
-        if self.with_conv:
-            self.conv = conv_nd(
-                dim, in_channels, in_channels, kernel_size=3, stride=1, padding=1
-            )
+        self.proj = nn.Linear(dim * shorten_factor, dim)
+        self.shorten_factor = shorten_factor
 
     def forward(self, x):
-        x = F.interpolate(x, scale_factor=2.0, mode="nearest")
-        if self.with_conv:
-            x = self.conv(x)
-        return x
+        x = rearrange(x, 'b (n s) d -> b n (s d)', s = self.shorten_factor)
+        return self.proj(x)
 
-
-class Downsample(nn.Module):
-    def __init__(self, in_channels, with_conv, dim=2):
+class LinearUpsample(nn.Module):
+    def __init__(self, dim, shorten_factor):
         super().__init__()
-        self.with_conv = with_conv
-        self.dim = dim
-        if self.with_conv:
-            # no asymmetric padding in torch conv, must do it ourselves
-            self.conv = conv_nd(
-                dim, in_channels, in_channels, kernel_size=3, stride=2, padding=0
-            )
-
-        self.avg_pool = avg_pool_nd(
-            dim, kernel_size=2, stride=2
-        )
+        self.proj = nn.Linear(dim, dim * shorten_factor)
+        self.shorten_factor = shorten_factor
 
     def forward(self, x):
-        if self.with_conv:
-            pad = (0, 1) if self.dim == 1 else (0, 1, 0, 1)
-            x = F.pad(x, pad, mode="constant", value=0)
-            x = self.conv(x)
-        else:
-            x = self.avg_pool(x)
-        return x
+        x = self.proj(x)
+        return rearrange(x, 'b n (s d) -> b (n s) d', s = self.shorten_factor)
 
 
 class ResnetBlock(nn.Module):
@@ -275,7 +255,7 @@ class Encoder(nn.Module):
         for block_channels in block_out_channels:
             block_in_channels = block_channels // 2
             down_modules.append(
-                Downsample(in_channels=block_in_channels, with_conv=True, dim=1)
+                LinearDownsample(dim=block_in_channels, shorten_factor=2)
             )
 
             down_modules.append(
@@ -340,7 +320,7 @@ class Decoder(nn.Module):
             block_in_channels = block_channels if i == 0 else int(block_channels * 2)
 
             up_modules.append(
-                Upsample(in_channels=block_in_channels, with_conv=True, dim=1)
+                LinearUpsample(dim=block_in_channels, shorten_factor=2)
             )
 
             up_modules.append(

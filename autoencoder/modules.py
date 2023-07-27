@@ -261,8 +261,10 @@ class Encoder(nn.Module):
         super().__init__()
 
         self.embed = nn.Sequential(
-            conv_nd(2, in_channels, embedding_channels // 2, 3, padding=1),
-            nn.GELU(),
+            conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
+            nn.SELU(),
+            conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
+            nn.SELU(),
             conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
         )
 

@@ -6,7 +6,7 @@ autoencoder:
     - 256
     - 512
     embed_dim: 32
-    embedding_channels: 16
+    embedding_channels: 128
     img_height: 128
     in_channels: 2
     n_embed: 2048
@@ -17,7 +17,7 @@ autoencoder:
     data_path: ../data/lakh_giant_midi_prmat2c_8bin_lmdb
     gradient_accumulation_steps: 2
     gradient_clip_val: 1.0
-    learning_rate: 0.00002
+    learning_rate: 0.0001
     logger_kwargs:
       entity: rainbow_tensor
       id:

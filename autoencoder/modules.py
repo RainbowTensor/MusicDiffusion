@@ -31,14 +31,11 @@ def get_timestep_embedding(timesteps, embedding_dim):
 
 
 def nonlinearity(x):
-    # swish
-    return x * torch.sigmoid(x)
+    return F.selu(x)
 
 
 def Normalize(in_channels, add_conv=False, num_groups=32):   
-    return nn.GroupNorm(
-        num_groups=num_groups, num_channels=in_channels, eps=1e-6, affine=True
-    )
+    return nn.BatchNorm1d(num_features=in_channels)
 
 
 class Upsample(nn.Module):
@@ -80,6 +77,68 @@ class Downsample(nn.Module):
         else:
             x = self.avg_pool(x)
         return x
+
+
+class ResnetBlock(nn.Module):
+    def __init__(
+        self,
+        *,
+        in_channels,
+        out_channels=None,
+        conv_shortcut=False,
+        dropout,
+        temb_channels=512,
+        add_conv=False,
+        dim=2
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        out_channels = in_channels if out_channels is None else out_channels
+        self.out_channels = out_channels
+        self.use_conv_shortcut = conv_shortcut
+
+        self.norm1 = Normalize(in_channels, add_conv=add_conv)
+        self.conv1 = conv_nd(
+            dim, in_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
+        if temb_channels > 0:
+            self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
+        self.norm2 = Normalize(out_channels, add_conv=add_conv)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.conv2 = conv_nd(
+            dim, out_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                self.conv_shortcut = conv_nd(
+                    dim, in_channels, out_channels, kernel_size=3, stride=1, padding=1
+                )
+            else:
+                self.nin_shortcut = conv_nd(
+                    dim, in_channels, out_channels, kernel_size=1, stride=1, padding=0
+                )
+
+    def forward(self, x, temb=None):
+        h = x
+        h = self.norm1(h)
+        h = nonlinearity(h)
+        h = self.conv1(h)
+
+        if temb is not None:
+            h = h + self.temb_proj(nonlinearity(temb))[:, :, None, None]
+
+        h = self.norm2(h)
+        h = nonlinearity(h)
+        h = self.dropout(h)
+        h = self.conv2(h)
+
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                x = self.conv_shortcut(x)
+            else:
+                x = self.nin_shortcut(x)
+
+        return x + h
     
 
 class FeedForward(nn.Module):
@@ -134,7 +193,7 @@ class AttnBlock(nn.Module):
         self.in_channels = in_channels
         self.dim = dim
 
-        self.norm = Normalize(in_channels, add_conv=add_conv)
+        self.norm = nn.LayerNorm(in_channels)
         self.q = conv_nd(
             dim, in_channels, in_channels, kernel_size=1, stride=1, padding=0
         )
@@ -150,7 +209,7 @@ class AttnBlock(nn.Module):
 
     def forward(self, x):
         h_ = x   # b, c, w
-        h_ = self.norm(h_)
+        h_ = self.norm(h_.permute(0, 2, 1)).permute(0, 2, 1)
         q = self.q(h_)
         k = self.k(h_)
         v = self.v(h_)
@@ -183,6 +242,7 @@ class AttnBlock(nn.Module):
             h_ = h_.reshape(b, c, h, w)
 
         h_ = self.proj_out(h_)
+        h_ = nonlinearity(h_)
 
         return x + h_
 
@@ -217,9 +277,10 @@ class Encoder(nn.Module):
             )
 
             down_modules.append(
-                FeedForward(
-                    block_in_channels,
-                    out_dim=block_channels,
+                ResnetBlock(
+                    in_channels=block_in_channels,
+                    out_channels=block_channels,
+                    dim=1,
                     dropout=dropout
                 )
             )
@@ -250,7 +311,7 @@ class Encoder(nn.Module):
         h = h.reshape([B, C * H, W])
 
         h = self.flatten_proj(h)
-        h = self.pos_encoding(h.permute(2, 0, 1))
+        h = self.pos_encoding(h.permute(2, 0, 1)) # s, b, c
         
         h = self.down_modules(h.permute(1, 2, 0))
 
@@ -264,7 +325,6 @@ class Decoder(nn.Module):
     def __init__(
         self,
         img_height=128,
-        seq_len=256,
         block_out_channels=[256, 128],
         attn_per_block=2,
         z_channels=32,
@@ -282,9 +342,10 @@ class Decoder(nn.Module):
             )
 
             up_modules.append(
-                FeedForward(
-                    block_in_channels,
-                    out_dim=block_channels,
+                ResnetBlock(
+                    in_channels=block_in_channels,
+                    out_channels=block_channels,
+                    dim=1,
                     dropout=dropout
                 )
             )
@@ -299,8 +360,8 @@ class Decoder(nn.Module):
         self.up_modules = nn.Sequential(*up_modules)
 
         self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
-        self.conv_out_onset = FeedForward(block_out_channels[-1], out_dim=img_height)
-        self.conv_out_duration = FeedForward(block_out_channels[-1], out_dim=img_height)
+        self.conv_out_onset = nn.Linear(block_out_channels[-1], img_height)
+        self.conv_out_duration = nn.Linear( block_out_channels[-1], img_height)
 
     def forward(self, z):
         h = self.conv_in(z)

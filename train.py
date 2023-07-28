@@ -118,7 +118,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 loss, emb_loss = model.training_step(batch)
 
                 accelerator.backward(loss)
-                accelerator.clip_grad_norm_(model.parameters(), 1.0)
+                accelerator.clip_grad_norm_(model.parameters(), 4.0)
 
                 optimizer.step()
                 lr_scheduler.step()

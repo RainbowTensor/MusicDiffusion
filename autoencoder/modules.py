@@ -10,11 +10,11 @@ from .nn import conv_nd, avg_pool_nd
 
 
 def nonlinearity(x):
-    return F.selu(x)
+    return F.gelu(x)
 
 
 def Normalize(in_channels, add_conv=False, num_groups=32):   
-    return nn.LayerNorm(in_channels)
+    return nn.BatchNorm1d(in_channels)
 
 
 def FeedForward(dim, out_dim=None, mult=4, dropout=0.):
@@ -23,12 +23,87 @@ def FeedForward(dim, out_dim=None, mult=4, dropout=0.):
 
     hidden_dim = dim * mult
 
-    return nn.Sequential(
+    net = nn.Sequential(
         nn.Linear(dim, hidden_dim),
         nn.GELU(),
         nn.Dropout(dropout),
         nn.Linear(hidden_dim, out_dim)
     )
+
+    def _init_weights(layer):
+        if isinstance(layer, nn.Linear):
+            nn.init.xavier_normal_(layer.weight)
+
+    net.apply(_init_weights)
+
+    return net
+
+
+class ResnetBlock(nn.Module):
+    def __init__(
+        self,
+        *,
+        in_channels,
+        out_channels=None,
+        conv_shortcut=False,
+        dropout,
+        temb_channels=512,
+        add_conv=False,
+        dim=2
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        out_channels = in_channels if out_channels is None else out_channels
+        self.out_channels = out_channels
+        self.use_conv_shortcut = conv_shortcut
+
+        self.norm1 = Normalize(in_channels, add_conv=add_conv)
+        self.conv1 = conv_nd(
+            dim, in_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
+        if temb_channels > 0:
+            self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
+        self.norm2 = Normalize(out_channels, add_conv=add_conv)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.conv2 = conv_nd(
+            dim, out_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                self.conv_shortcut = conv_nd(
+                    dim, in_channels, out_channels, kernel_size=3, stride=1, padding=1
+                )
+            else:
+                self.nin_shortcut = conv_nd(
+                    dim, in_channels, out_channels, kernel_size=1, stride=1, padding=0
+                )
+
+    def forward(self, x, temb=None):
+        """
+        Arguments:
+            x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
+        """
+        x = x.permute(0, 2, 1)
+        h = x
+        h = self.norm1(h)
+        h = nonlinearity(h)
+        h = self.conv1(h)
+
+        if temb is not None:
+            h = h + self.temb_proj(nonlinearity(temb))[:, :, None, None]
+
+        h = self.norm2(h)
+        h = nonlinearity(h)
+        h = self.dropout(h)
+        h = self.conv2(h)
+
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                x = self.conv_shortcut(x)
+            else:
+                x = self.nin_shortcut(x)
+
+        return (x + h).permute(0, 2, 1)
 
 
 class LinearDownsample(nn.Module):
@@ -82,6 +157,8 @@ class Attention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
+        self.init_weights()
+
     def forward(self, x):
         h = self.heads
         kv_input = x
@@ -99,6 +176,13 @@ class Attention(nn.Module):
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)', h = h)
         return self.to_out(out)
+    
+    def init_weights(self):
+        def _init_weights(layer):
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_normal_(layer.weight)
+                
+        self.apply(_init_weights)
 
 
 class Transformer(nn.Module):
@@ -172,7 +256,7 @@ class Encoder(nn.Module):
             conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
         )
 
-        self.flatten_proj = FeedForward(dim=embedding_channels * img_height, out_dim=block_out_channels[0] // 2, mult=ff_mult)
+        self.flatten_proj = conv_nd(1, embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
         self.pos_encoding = PositionalEncoding(block_out_channels[0] // 2)
 
         down_modules = []
@@ -183,10 +267,10 @@ class Encoder(nn.Module):
             )
 
             down_modules.append(
-                FeedForward(
-                    dim=block_in_channels,
-                    out_dim=block_channels,
-                    mult=ff_mult,
+                ResnetBlock(
+                    in_channels=block_in_channels,
+                    out_channels=block_channels,
+                    dim=1,
                     dropout=dropout
                 )
             )
@@ -215,16 +299,16 @@ class Encoder(nn.Module):
         h = self.embed(x)
 
         B, C, H, W = h.shape
-        h = h.reshape([B, C * H, W]).permute(0, 2, 1)   # B, W, C
+        h = h.reshape([B, C * H, W])#.permute(0, 2, 1)   # B, C, W
 
-        h = self.flatten_proj(h)
-        h = self.pos_encoding(h.permute(1, 0, 2))   #w, b, c
+        h = self.flatten_proj(h).permute(0, 2, 1)   # B, W, C
+        h = self.pos_encoding(h.permute(1, 0, 2))   # W, B, C
         
         h = self.down_modules(h.permute(1, 0, 2))
 
         # end
-        h = self.norm_out(h)
-        h = nonlinearity(h)
+        h = self.norm_out(h.permute(0, 2, 1))
+        h = nonlinearity(h.permute(0, 2, 1))
         h = self.to_out(h)
 
         return h
@@ -251,10 +335,10 @@ class Decoder(nn.Module):
             )
 
             up_modules.append(
-                FeedForward(
-                    dim=block_in_channels,
-                    out_dim=block_channels,
-                    mult=ff_mult,
+                ResnetBlock(
+                    in_channels=block_in_channels,
+                    out_channels=block_channels,
+                    dim=1,
                     dropout=dropout
                 )
             )
@@ -271,8 +355,16 @@ class Decoder(nn.Module):
         self.up_modules = nn.Sequential(*up_modules)
 
         self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
-        self.conv_out_onset = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
-        self.conv_out_duration = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
+        self.conv_out_onset = nn.Linear(block_out_channels[-1], img_height)
+        self.conv_out_duration = nn.Linear( block_out_channels[-1], img_height)
+
+    def init_weights(self):
+        def _init_weights(layer):
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_normal_(layer.weight)
+
+        self.conv_out_onset.apply(_init_weights)
+        self.conv_out_duration.apply(_init_weights)
 
     def forward(self, z):
         """
@@ -282,8 +374,8 @@ class Decoder(nn.Module):
         h = self.proj_in(z)
         h = self.up_modules(h)
 
-        h = self.norm_out(h)
-        h = nonlinearity(h)
+        h = self.norm_out(h.permute(0, 2, 1))
+        h = nonlinearity(h.permute(0, 2, 1))
 
         out_onset = self.conv_out_onset(h)
         out_dur = self.conv_out_duration(h)
@@ -335,7 +427,7 @@ class Autoencoder1D(nn.Module):
         self.post_quant_conv = conv_nd(1, embed_dim, z_channels, 1)
 
     def encode(self, x):
-        encoded = F.normalize(self.encoder(x))
+        encoded = self.encoder(x)
         encoded_conv = self.quant_conv(encoded.permute(0, 2, 1))
 
         quant, emb_loss, info = self.quantize(encoded_conv[:, :, None, :])

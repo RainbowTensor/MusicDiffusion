@@ -79,8 +79,8 @@ class Autoencoder(nn.Module):
         if use_weight:
             sample_weight = torch.where(
                 label == 1,
-                1.5,
-                0.5
+                4,
+                1
             )
 
         loss = F.binary_cross_entropy_with_logits(pred, label, reduction='none')

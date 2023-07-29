@@ -100,7 +100,15 @@ class Encoder(nn.Module):
     ):
         super().__init__()
 
-        self.embed = nn.Sequential(
+        self.embed_onset = nn.Sequential(
+            conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
+            nn.GELU(),
+            conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
+            nn.GELU(),
+            conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
+        )
+
+        self.embed_duration = nn.Sequential(
             conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
             nn.GELU(),
             conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
@@ -146,14 +154,16 @@ class Encoder(nn.Module):
         Arguments:
             x: Tensor, shape ``[batch_size, channels, width, height]``
         """
-
         x = x.permute(0, 1, 3, 2)
-        h = self.embed(x)
+        B, C, H, W = x.shape
 
-        B, C, H, W = h.shape
-        h = h.reshape([B, C * H, W])#.permute(0, 2, 1)   # B, C, W
+        onset = x[:, 0, :, :][:, None, :, :]
+        duration = x[:, 1, :, :][:, None, :, :]
 
-        h = self.flatten_proj(h).permute(0, 2, 1)   # B, W, C
+        h_onset = self.embed_onset(onset).reshape([B, C * H, W])
+        h_duration = self.embed_duration(duration).reshape([B, C * H, W])
+
+        h = self.flatten_proj(h_onset + h_duration).permute(0, 2, 1)   # B, W, C
         h = self.pos_encoding(h.permute(1, 0, 2))   # W, B, C
         
         h = self.down_modules(h.permute(1, 0, 2))

@@ -155,13 +155,17 @@ class Encoder(nn.Module):
             x: Tensor, shape ``[batch_size, channels, width, height]``
         """
         x = x.permute(0, 1, 3, 2)
-        B, C, H, W = x.shape
 
         onset = x[:, 0, :, :][:, None, :, :]
         duration = x[:, 1, :, :][:, None, :, :]
 
-        h_onset = self.embed_onset(onset).reshape([B, C * H, W])
-        h_duration = self.embed_duration(duration).reshape([B, C * H, W])
+        h_onset = self.embed_onset(onset)
+        h_duration = self.embed_duration(duration)
+        
+        B, C, H, W = h_onset.shape
+
+        h_onset = h_onset.reshape([B, C * H, W])
+        h_duration = h_duration.reshape([B, C * H, W])
 
         h = self.flatten_proj(h_onset + h_duration).permute(0, 2, 1)   # B, W, C
         h = self.pos_encoding(h.permute(1, 0, 2))   # W, B, C

@@ -9,10 +9,10 @@ autoencoder:
     embedding_channels: 16
     ff_mult: 4
     img_height: 128
-    in_channels: 2
+    in_channels: 1
     n_embed: 2048
+    weight_decay: 0.0002
     z_channels: 32
-    weight_decay: 2.0e-04
   train:
     batch_size: 32
     checkpoint_every: 1000
@@ -22,13 +22,13 @@ autoencoder:
     learning_rate: 5.0e-05
     logger_kwargs:
       entity: rainbow_tensor
-      id:
+      id: ye3gohgr
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 1000
     mixed_precision: fp16
     num_epochs: 50
-    resume: false
+    resume: true
     save_dir: ./models
     save_name: autoencoder
 music_diffusion:

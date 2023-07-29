@@ -2,7 +2,7 @@ import torch
 from torch import nn, einsum
 import torch.nn.functional as F
 import math
-import numpy as np
+import torchlayers as tl
 from einops import rearrange
 
 from .vq import VectorQuantizer
@@ -321,7 +321,8 @@ class Decoder(nn.Module):
         attn_per_block=2,
         z_channels=32,
         dropout=0.1,
-        ff_mult=2
+        ff_mult=2,
+        weight_decay=1e-4
     ):
         super().__init__()
         self.proj_in = FeedForward(dim=z_channels, out_dim=block_out_channels[0], mult=ff_mult)
@@ -355,16 +356,8 @@ class Decoder(nn.Module):
         self.up_modules = nn.Sequential(*up_modules)
 
         self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
-        self.conv_out_onset = nn.Linear(block_out_channels[-1], img_height)
-        self.conv_out_duration = nn.Linear( block_out_channels[-1], img_height)
-
-    def init_weights(self):
-        def _init_weights(layer):
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_normal_(layer.weight)
-
-        self.conv_out_onset.apply(_init_weights)
-        self.conv_out_duration.apply(_init_weights)
+        self.conv_out_onset = tl.L1(FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult), weight_decay=weight_decay)
+        self.conv_out_duration = tl.L1(FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult), weight_decay=weight_decay)
 
     def forward(self, z):
         """
@@ -396,6 +389,7 @@ class Autoencoder1D(nn.Module):
         embed_dim=32,
         ff_mult=2,
         dropout=0.1,
+        weight_decay=1e-4
     ):
         super().__init__()
 
@@ -417,6 +411,7 @@ class Autoencoder1D(nn.Module):
             z_channels=z_channels,
             ff_mult=ff_mult,
             dropout=dropout,
+            weight_decay=weight_decay
         )
 
         self.quantize = VectorQuantizer(

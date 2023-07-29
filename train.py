@@ -100,7 +100,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
     num_training_steps=(len(train_dataloader) * num_epochs),
 )
 
-wandb.watch(model, log_freq=20)
+# wandb.watch(model, log_freq=20)
 
 def train_loop(model, optimizer, train_dataloader, lr_scheduler):
     accelerator = Accelerator(

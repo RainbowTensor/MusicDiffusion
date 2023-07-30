@@ -221,6 +221,20 @@ class Decoder(nn.Module):
 
         self.up_modules = nn.Sequential(*up_modules)
 
+        self.branch_onset = Transformer(
+            dim=block_out_channels[-1],
+            depth=attn_per_block // 2,
+            ff_mult=ff_mult,
+            dropout=dropout
+        )
+
+        self.branch_duration = Transformer(
+            dim=block_out_channels[-1],
+            depth=attn_per_block // 2,
+            ff_mult=ff_mult,
+            dropout=dropout
+        )
+
         self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
         self.conv_out_onset = L1(FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult), weight_decay=weight_decay)
         self.conv_out_duration = L1(FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult), weight_decay=weight_decay)
@@ -233,11 +247,17 @@ class Decoder(nn.Module):
         h = self.proj_in(z)
         h = self.up_modules(h)
 
-        h = self.norm_out(h.permute(0, 2, 1))
-        h = nonlinearity(h.permute(0, 2, 1))
+        h_onset = self.branch_onset(h)
+        h_duration = self.branch_duration(h)
 
-        out_onset = self.conv_out_onset(h)
-        out_dur = self.conv_out_duration(h)
+        h_onset = self.norm_out(h_onset.permute(0, 2, 1))
+        h_onset = nonlinearity(h_onset.permute(0, 2, 1))
+
+        h_duration = self.norm_out(h_duration.permute(0, 2, 1))
+        h_duration = nonlinearity(h_duration.permute(0, 2, 1))
+
+        out_onset = self.conv_out_onset(h_onset)
+        out_dur = self.conv_out_duration(h_duration)
 
         return out_onset, out_dur
     

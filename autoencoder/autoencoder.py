@@ -79,7 +79,7 @@ class Autoencoder(nn.Module):
         if use_weight:
             sample_weight = torch.where(
                 label == 1,
-                4,
+                8,
                 1
             )
 

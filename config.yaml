@@ -1,20 +1,21 @@
 autoencoder:
   class: Autoencoder1D
   model:
-    attn_per_block: 8
+    attn_per_block: 4
+    transformer_channels: 256
     block_out_channels:
+    - 128
     - 256
-    - 512
     embed_dim: 32
     embedding_channels: 16
     ff_mult: 4
-    img_height: 128
-    in_channels: 1
+    patch_size: 4
+    img_size: [256, 128]
+    in_channels: 2
     n_embed: 2048
-    weight_decay: 0.0002
     z_channels: 32
   train:
-    batch_size: 32
+    batch_size: 16
     checkpoint_every: 1000
     data_path: ../data/lakh_giant_midi_prmat2c_8bin_lmdb
     gradient_accumulation_steps: 2
@@ -22,7 +23,7 @@ autoencoder:
     learning_rate: 5.0e-05
     logger_kwargs:
       entity: rainbow_tensor
-      id: 
+      id:
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 1000

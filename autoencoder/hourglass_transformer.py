@@ -151,3 +151,16 @@ class PositionalEncoding(nn.Module):
         """
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
+    
+
+class PatchEmbedding(nn.Module):
+    def __init__(self, patch_size=16, num_hiddens=512):
+        super().__init__()
+        if not isinstance(patch_size, (list, tuple)):
+            patch_size = (patch_size, patch_size)
+
+        self.conv = nn.LazyConv2d(num_hiddens, kernel_size=patch_size,
+                                  stride=patch_size)
+
+    def forward(self, X):
+        return self.conv(X).flatten(2).transpose(1, 2)

@@ -4,10 +4,10 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from .vq import VectorQuantizer
-from .nn import conv_nd
+from .nn import conv_nd, avg_pool_nd, unpatchify
 from .regularization import L1
 from .hourglass_transformer import (
-    Transformer, FeedForward, PositionalEncoding, LinearDownsample, LinearUpsample
+    Transformer, FeedForward, PositionalEncoding, PatchEmbedding
 )
 
 
@@ -15,8 +15,49 @@ def nonlinearity(x):
     return F.gelu(x)
 
 
-def Normalize(in_channels, add_conv=False, num_groups=32):   
-    return nn.BatchNorm1d(in_channels)
+def Normalize(in_channels, add_conv=False, num_groups=8):   
+    return nn.BatchNorm2d(in_channels)
+
+
+class Upsample(nn.Module):
+    def __init__(self, in_channels, with_conv, dim=2):
+        super().__init__()
+        self.with_conv = with_conv
+        if self.with_conv:
+            self.conv = conv_nd(
+                dim, in_channels, in_channels, kernel_size=3, stride=1, padding=1
+            )
+
+    def forward(self, x):
+        x = F.interpolate(x, scale_factor=2.0, mode="nearest")
+        if self.with_conv:
+            x = self.conv(x)
+        return x
+
+
+class Downsample(nn.Module):
+    def __init__(self, in_channels, with_conv, dim=2):
+        super().__init__()
+        self.with_conv = with_conv
+        self.dim = dim
+        if self.with_conv:
+            # no asymmetric padding in torch conv, must do it ourselves
+            self.conv = conv_nd(
+                dim, in_channels, in_channels, kernel_size=3, stride=2, padding=0
+            )
+
+        self.avg_pool = avg_pool_nd(
+            dim, kernel_size=2, stride=2
+        )
+
+    def forward(self, x):
+        if self.with_conv:
+            pad = (0, 1) if self.dim == 1 else (0, 1, 0, 1)
+            x = F.pad(x, pad, mode="constant", value=0)
+            x = self.conv(x)
+        else:
+            x = self.avg_pool(x)
+        return x
 
 
 class ResnetBlock(nn.Module):
@@ -63,9 +104,7 @@ class ResnetBlock(nn.Module):
         Arguments:
             x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
         """
-        x = x.permute(0, 2, 1)
-        h = x
-        h = self.norm1(h)
+        h = self.norm1(x)
         h = nonlinearity(h)
         h = self.conv1(h)
 
@@ -83,98 +122,64 @@ class ResnetBlock(nn.Module):
             else:
                 x = self.nin_shortcut(x)
 
-        return (x + h).permute(0, 2, 1)
+        return x + h
 
 
 class Encoder(nn.Module):
     def __init__(
         self,
-        img_height=128,
         in_channels=2,
         embedding_channels=16,
+        transformer_channels=512,
         block_out_channels=[128, 256],
         attn_per_block=2,
         z_channels=32,
+        patch_size=4,
         dropout=0.1,
         ff_mult=2
     ):
         super().__init__()
 
-        self.embed_onset = nn.Sequential(
-            conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
-            nn.GELU(),
-            conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
-            nn.GELU(),
-            conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
-        )
+        self.embed = ResnetBlock(in_channels=in_channels, out_channels=embedding_channels, dim=2, dropout=dropout)
 
-        self.embed_duration = nn.Sequential(
-            conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
-            nn.GELU(),
-            conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
-            nn.GELU(),
-            conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
-        )
-
-        self.flatten_proj = conv_nd(1, embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
-        self.pos_encoding = PositionalEncoding(block_out_channels[0] // 2)
-
-        down_modules = []
+        down_block = []
+        block_in_channels = embedding_channels
         for block_channels in block_out_channels:
-            block_in_channels = block_channels // 2
-            down_modules.append(
-                LinearDownsample(dim=block_in_channels, shorten_factor=2)
-            )
+            down_block.extend([
+                ResnetBlock(in_channels=block_in_channels, out_channels=block_channels, dim=2, dropout=dropout),
+                Downsample(block_channels, with_conv=True)
+            ])
 
-            down_modules.append(
-                ResnetBlock(
-                    in_channels=block_in_channels,
-                    out_channels=block_channels,
-                    dim=1,
-                    dropout=dropout
-                )
-            )
+            block_in_channels = block_channels
 
-            down_modules.append(
-                Transformer(
-                    dim=block_channels,
-                    depth=attn_per_block,
-                    ff_mult=ff_mult,
-                    dropout=dropout
-                )
-            )
+        self.down_block = nn.Sequential(*down_block)
 
-        self.down_modules = nn.Sequential(*down_modules)
+        self.patchify = PatchEmbedding(patch_size, transformer_channels)
+        self.pos_encoding = PositionalEncoding(transformer_channels)
 
-        self.norm_out = Normalize(block_out_channels[-1])
-        self.to_out = FeedForward(dim=block_out_channels[-1], out_dim=z_channels, mult=ff_mult)
+        self.trnaformer_block = Transformer(
+            dim=transformer_channels, depth=attn_per_block, ff_mult=ff_mult, dropout=dropout
+        )
+
+        self.norm_out = nn.LayerNorm(transformer_channels)
+        self.to_out = FeedForward(dim=transformer_channels, out_dim=z_channels, mult=ff_mult)
 
     def forward(self, x):
         """
         Arguments:
             x: Tensor, shape ``[batch_size, channels, width, height]``
         """
-        x = x.permute(0, 1, 3, 2)
+        h = self.embed(x)
+        h = self.down_block(h)
 
-        onset = x[:, 0, :, :][:, None, :, :]
-        duration = x[:, 1, :, :][:, None, :, :]
-
-        h_onset = self.embed_onset(onset)
-        h_duration = self.embed_duration(duration)
+        h = self.patchify(h)
+        h = self.pos_encoding(h.permute(1, 0, 2))   # L, B, C
         
-        B, C, H, W = h_onset.shape
-
-        h_onset = h_onset.reshape([B, C * H, W])
-        h_duration = h_duration.reshape([B, C * H, W])
-
-        h = self.flatten_proj(h_onset + h_duration).permute(0, 2, 1)   # B, W, C
-        h = self.pos_encoding(h.permute(1, 0, 2))   # W, B, C
-        
-        h = self.down_modules(h.permute(1, 0, 2))
+        h = self.trnaformer_block(h.permute(1, 0, 2))
 
         # end
-        h = self.norm_out(h.permute(0, 2, 1))
-        h = nonlinearity(h.permute(0, 2, 1))
+        h = self.norm_out(h)
+        h = nonlinearity(h)
         h = self.to_out(h)
 
         return h
@@ -182,62 +187,44 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(
         self,
-        img_height=128,
+        transformer_channels=512,
         block_out_channels=[256, 128],
         attn_per_block=2,
         z_channels=32,
+        patch_size=4,
         dropout=0.1,
         ff_mult=2,
-        weight_decay=1e-4
+        img_size=(256, 128),
     ):
         super().__init__()
-        self.proj_in = FeedForward(dim=z_channels, out_dim=block_out_channels[0], mult=ff_mult)
 
-        up_modules = []
-        for i, block_channels in enumerate(block_out_channels):
-            block_in_channels = block_channels if i == 0 else int(block_channels * 2)
+        w, h = img_size
+        self.w = (w // 2**len(block_out_channels)) // patch_size
+        self.h = h // 2**len(block_out_channels) // patch_size
 
-            up_modules.append(
-                LinearUpsample(dim=block_in_channels, shorten_factor=2)
-            )
+        self.patch_size = patch_size
+        self.proj_in = FeedForward(dim=z_channels, out_dim=transformer_channels, mult=ff_mult)
 
-            up_modules.append(
-                ResnetBlock(
-                    in_channels=block_in_channels,
-                    out_channels=block_channels,
-                    dim=1,
-                    dropout=dropout
-                )
-            )
-
-            up_modules.append(
-                Transformer(
-                    dim=block_channels,
-                    depth=attn_per_block,
-                    ff_mult=ff_mult,
-                    dropout=dropout
-                )
-            )
-
-        self.up_modules = nn.Sequential(*up_modules)
-
-        self.branch_onset = Transformer(
-            dim=block_out_channels[-1],
-            depth=attn_per_block // 2,
-            ff_mult=ff_mult,
-            dropout=dropout
+        self.trnaformer_block = Transformer(
+            dim=transformer_channels, depth=attn_per_block, ff_mult=ff_mult, dropout=dropout
         )
+        self.to_patchify = nn.Linear(transformer_channels, (patch_size**2) * transformer_channels)
 
-        self.branch_duration = Transformer(
-            dim=block_out_channels[-1],
-            depth=attn_per_block // 2,
-            ff_mult=ff_mult,
-            dropout=dropout
-        )
+        up_block = []
+        block_in_channels = transformer_channels
+        for block_channels in block_out_channels:
+            up_block.extend([
+                ResnetBlock(in_channels=block_in_channels, out_channels=block_channels, dim=2, dropout=dropout),
+                Upsample(block_channels, with_conv=True)
+            ])
 
-        self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
-        self.conv_out_onset = L1(FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult), weight_decay=weight_decay)
-        self.conv_out_duration = L1(FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult), weight_decay=weight_decay)
+            block_in_channels = block_channels
+
+        self.up_block = nn.Sequential(*up_block)
+
+        self.norm_out = Normalize(block_channels, add_conv=False)
+        self.conv_out_onset = ResnetBlock(in_channels=block_channels, out_channels=1, dim=2, dropout=dropout)
+        self.conv_out_duration = ResnetBlock(in_channels=block_channels, out_channels=1, dim=2, dropout=dropout)
 
     def forward(self, z):
         """
@@ -245,19 +232,18 @@ class Decoder(nn.Module):
             z: Tensor, shape ``[batch_size, width, channels]``
         """
         h = self.proj_in(z)
-        h = self.up_modules(h)
 
-        h_onset = self.branch_onset(h)
-        h_duration = self.branch_duration(h)
+        h = self.trnaformer_block(h)
 
-        h_onset = self.norm_out(h_onset.permute(0, 2, 1))
-        h_onset = nonlinearity(h_onset.permute(0, 2, 1))
+        h = self.to_patchify(h)
+        h = unpatchify(h, self.patch_size, self.h, self.w)
+        h = self.up_block(h)
 
-        h_duration = self.norm_out(h_duration.permute(0, 2, 1))
-        h_duration = nonlinearity(h_duration.permute(0, 2, 1))
+        h = self.norm_out(h)
+        h = nonlinearity(h)
 
-        out_onset = self.conv_out_onset(h_onset)
-        out_dur = self.conv_out_duration(h_duration)
+        out_onset = self.conv_out_onset(h).squeeze(1).permute(0, 2, 1)
+        out_dur = self.conv_out_duration(h).squeeze(1).permute(0, 2, 1)
 
         return out_onset, out_dur
     
@@ -265,39 +251,42 @@ class Decoder(nn.Module):
 class Autoencoder1D(nn.Module):
     def __init__(
         self,
-        img_height=128,
         in_channels=2,
         embedding_channels=16,
+        transformer_channels=512,
         block_out_channels=[128, 256],
         attn_per_block=2,
         z_channels=32,
         n_embed=2048,
         embed_dim=32,
+        patch_size=4,
+        img_size=(256, 128),
         ff_mult=2,
         dropout=0.1,
-        weight_decay=1e-4
     ):
         super().__init__()
 
         self.encoder = Encoder(
-            img_height=img_height,
             in_channels=in_channels,
+            transformer_channels=transformer_channels,
             embedding_channels=embedding_channels,
             block_out_channels=block_out_channels,
             attn_per_block=attn_per_block,
             z_channels=z_channels,
+            patch_size=patch_size,
             ff_mult=ff_mult,
             dropout=dropout,
         )
 
         self.decoder = Decoder(
-            img_height=img_height,
+            transformer_channels=transformer_channels,
             block_out_channels=list(reversed(block_out_channels)),
             attn_per_block=attn_per_block,
             z_channels=z_channels,
             ff_mult=ff_mult,
+            patch_size=patch_size,
+            img_size=img_size,
             dropout=dropout,
-            weight_decay=weight_decay
         )
 
         self.quantize = VectorQuantizer(

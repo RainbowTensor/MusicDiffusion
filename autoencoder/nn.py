@@ -119,23 +119,3 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     if dim % 2:
         embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
     return embedding
-
-
-def unpatchify(x, patch_size, h=128, w=256):
-    """Combine non-overlapped patches into images.
-
-    Args:
-        x (torch.Tensor): The shape is (N, L, patch_size**2 *3)
-        patch_size (int) patch size
-        h (int): Image height
-        w (int): Image width
-    Returns:
-        imgs (torch.Tensor): The shape is (N, 2, H, W)
-    """
-    p = patch_size
-    c = x.shape[-1] // patch_size**2
-
-    x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
-    x = torch.einsum('nhwpqc->nchpwq', x)
-    imgs = x.reshape(shape=(x.shape[0], c, h * p, w * p))
-    return imgs

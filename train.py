@@ -31,7 +31,7 @@ gradient_accumulation_steps = train_config["gradient_accumulation_steps"]
 save_path = f'./{train_config["save_dir"]}/autoencoder.pt'
 
 train_dataset = LakhPrmat2cLMDB(data_path)
-inp, label = train_dataset[0]
+train_dataset[0]
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=batch_size,
@@ -40,7 +40,6 @@ train_dataloader = DataLoader(
 )
 
 model = Autoencoder(autoencoder_config)
-model(inp[None, ...])
 
 total_params = sum(p.numel() for p in model.parameters())
 

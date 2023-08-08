@@ -16,7 +16,7 @@ def nonlinearity(x):
 
 
 def Normalize(in_channels, add_conv=False, num_groups=32, eps=1e-4):   
-    return nn.LayerNorm(in_channels, eps=eps)
+    return nn.BatchNorm1d(in_channels, eps=eps)
 
 
 class ResnetBlock(nn.Module):
@@ -234,21 +234,25 @@ class Decoder(nn.Module):
             dropout=dropout
         )
 
-        self.norm_out = Normalize(block_out_channels[-1], add_conv=False)
+        self.norm_out = Normalize(img_height, add_conv=False)
 
-        self.to_onset = FeedForward(dim=block_out_channels[-1], out_dim=img_height, ff_mult=ff_mult)
-        self.to_duration = FeedForward(dim=block_out_channels[-1], out_dim=img_height, ff_mult=ff_mult)
+        self.to_onset = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
+        self.to_duration = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
 
         self.conv_out_onset = nn.Sequential(
-            ResnetBlock(in_channels=2, out_channels=16),
-            ResnetBlock(in_channels=16, out_channels=32),
-            ResnetBlock(in_channels=32, out_channels=1)
+            conv_nd(2, in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.GELU(),
+            conv_nd(2, in_channels=16, out_channels=32, kernel_size=3, padding=1),
+            nn.GELU(),
+            conv_nd(2, in_channels=32, out_channels=1, kernel_size=3, padding=1)
         )
 
         self.conv_out_duration = nn.Sequential(
-            ResnetBlock(in_channels=2, out_channels=16),
-            ResnetBlock(in_channels=16, out_channels=32),
-            ResnetBlock(in_channels=32, out_channels=1)
+            conv_nd(2, in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.GELU(),
+            conv_nd(2, in_channels=16, out_channels=32, kernel_size=3, padding=1),
+            nn.GELU(),
+            conv_nd(2, in_channels=32, out_channels=1, kernel_size=3, padding=1)
         )
 
     def forward(self, z):
@@ -289,7 +293,6 @@ class Autoencoder1D(nn.Module):
         embed_dim=32,
         ff_mult=2,
         dropout=0.1,
-        weight_decay=1e-4
     ):
         super().__init__()
 
@@ -311,7 +314,6 @@ class Autoencoder1D(nn.Module):
             z_channels=z_channels,
             ff_mult=ff_mult,
             dropout=dropout,
-            weight_decay=weight_decay
         )
 
         self.quantize = VectorQuantizer(

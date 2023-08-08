@@ -4,14 +4,12 @@ autoencoder:
     attn_per_block: 8
     block_out_channels:
     - 256
-    - 512
     embed_dim: 32
     embedding_channels: 16
     ff_mult: 4
     img_height: 128
     in_channels: 1
     n_embed: 2048
-    weight_decay: 0.0002
     z_channels: 32
   train:
     batch_size: 32

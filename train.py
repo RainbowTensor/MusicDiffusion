@@ -67,13 +67,20 @@ if train_config["resume"]:
     ckpt_path = f'{artifact_dir}/{train_config["save_name"]}.pt'
 
     loaded_state_dict = torch.load(ckpt_path)
-    new_state_dict = {}
-    for param_name, param_value in loaded_state_dict.items():
-        new_param_name = param_name.replace("_orig_mod.", "")
-        new_state_dict[new_param_name] = param_value
+    # new_state_dict = {}
+    # for param_name, param_value in loaded_state_dict.items():
+    #     new_param_name = param_name.replace("model.", "")
+    #     new_state_dict[new_param_name] = param_value
 
-    model.load_state_dict(
-        new_state_dict,
+    # model.model.load_state_dict(
+    #     new_state_dict, strict=False
+    # )
+    model.model.load_state_dict(
+        loaded_state_dict["autoencoder"],
+    )
+
+    model.discriminator.load_state_dict(
+        loaded_state_dict["discriminator"],
     )
 else:
     assert logger_kwargs["id"] is None, \
@@ -93,7 +100,9 @@ else:
     with open("./config.yaml", "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(model.model.parameters(), lr=learning_rate)
+# discr_optimizer = torch.optim.AdamW(model.discriminator.parameters(), lr=1e-4)
+
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=train_config["lr_warmup_steps"],
@@ -115,23 +124,29 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
     for epoch in range(num_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(model):
-                loss, emb_loss = model.training_step(batch)
+                loss, ce_loss, emb_loss, disct_loss, g_loss = model.training_step(batch)
 
-                accelerator.backward(loss)
+                accelerator.backward(loss, retain_graph=True)
+                # accelerator.backward(disct_loss)
+
                 accelerator.clip_grad_norm_(model.parameters(), 4.0)
 
                 optimizer.step()
+                # discr_optimizer.step()
+
                 lr_scheduler.step()
 
             optimizer.zero_grad()
+            # discr_optimizer.zero_grad()
 
-            accelerator.print(f"Step: {step}, loss: {loss}, emb_loss {emb_loss}")
+            accelerator.print(f"Step: {step}, loss: {loss}, emb_loss {emb_loss}, discriminator_loss {disct_loss}")
 
             if step % train_config["checkpoint_every"] == 0 and step != 0:
-                torch.save(
-                    accelerator.unwrap_model(model).state_dict(),
-                    save_path
-                )
+                unwrapped_model = accelerator.unwrap_model(model)
+                torch.save({
+                    "autoencoder": unwrapped_model.model.state_dict(),
+                    "discriminator": unwrapped_model.discriminator.state_dict()
+                }, save_path)
 
                 artifact = wandb.Artifact(f"model-{run.id}", "model")
                 artifact.add_file(save_path)
@@ -154,7 +169,10 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
             if step % 20 == 0:
                 wandb.log({
                     "loss": loss,
-                    "emb_loss": emb_loss
+                    "ce_loss": ce_loss,
+                    "emb_loss": emb_loss,
+                    "g_loss": g_loss,
+                    "discriminator_loss": disct_loss
                 })
 
 

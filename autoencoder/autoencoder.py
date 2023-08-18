@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .modules import Autoencoder1D
+from .discriminator import NLayerDiscriminator
 import numpy as np
 
 
@@ -11,6 +12,7 @@ class Autoencoder(nn.Module):
 
         self.config = config
         self.model = Autoencoder1D(**config["model"])
+        self.discriminator = NLayerDiscriminator()
 
     def encode(self, x):
         encoded, quantized, commit_loss = self.model.encode(x)
@@ -21,14 +23,13 @@ class Autoencoder(nn.Module):
         return encoded, quantized, commit_loss
 
     def decode(self, x, sigmoid):
-        dec_onset, dec_duration = self.model.decode(x)
-        self.assert_not_nan(dec_onset, "dec_onset")
-        self.assert_not_nan(dec_duration, "dec_duration")
+        dec = self.model.decode(x)
+        self.assert_not_nan(dec, "decoded")
 
         if sigmoid:
-            return F.sigmoid(dec_onset), F.sigmoid(dec_duration)
+            return F.sigmoid(dec)
 
-        return dec_onset, dec_duration
+        return dec
 
     def from_latent(self, quant):
         dec = self.decode(quant, sigmoid=True)
@@ -41,9 +42,9 @@ class Autoencoder(nn.Module):
         if inference:
             return self.from_latent(quantized)
 
-        dec_onset, dec_duration = self.decode(quantized, sigmoid=False)
+        dec = self.decode(quantized, sigmoid=False)
 
-        return (dec_onset, dec_duration), commit_loss
+        return dec, commit_loss
 
     def assert_not_nan(self, x, where):
         if x.isnan().any():
@@ -53,50 +54,54 @@ class Autoencoder(nn.Module):
         images, labes = batch
 
         dec, commit_loss = self(images)
-        loss = self.compute_loss(images, dec, use_weight=True)
-        loss = loss + commit_loss
+        ce_loss, disct_loss, g_loss = self.compute_loss(images, dec, use_weight=True)
+        loss = ce_loss + commit_loss + g_loss * 0.2
 
-        return loss, commit_loss
+        return loss, ce_loss, commit_loss, disct_loss, g_loss
 
-    def compute_loss(self, input, output, use_weight=False):
-        pred_onsets, pred_durations = output
-
-        onsets_label = input[:, 0, :, :]
-        duration_label = input[:, 1, :, :]
-
-        ce_onset = self._compute_bce_loss_with_weight(
-            pred_onsets, onsets_label, use_weight
-        )
-        ce_duration = self._compute_bce_loss_with_weight(
-            pred_durations, duration_label, use_weight
+    def compute_loss(self, label, pred, use_weight=False):
+        pred = pred[:, None, :, :]
+        ce_loss = self._compute_bce_loss_with_weight(
+            pred, label, use_weight
         )
 
-        return (ce_onset + ce_duration)
+        # discr_loss, g_loss = self._compute_discriminator_loss(pred, label)
+        discr_loss = 0
+        g_loss = 0
+
+        return ce_loss, discr_loss, g_loss
+
+    def _compute_discriminator_loss(self, pred, label):
+        discr_real = self.discriminator(label)
+        discr_fake = self.discriminator(pred.sigmoid())
+
+        discr_real_loss = torch.mean(F.relu(1 - discr_real))
+        discr_fake_loss = torch.mean(F.relu(1 + discr_fake))
+
+        discr_loss = (discr_real_loss + discr_fake_loss) * 0.5
+        g_loss = -torch.mean(discr_fake)
+
+        return discr_loss, g_loss
 
     def _compute_bce_loss_with_weight(self, pred, label, use_weight=False):
         sample_weight = 1
 
         if use_weight:
             sample_weight = torch.where(
-                label == 1,
-                8,
-                1
+                label != 0,
+                4,
+                2
             )
 
-        loss = F.binary_cross_entropy_with_logits(pred, label, reduction='none')
+        loss = F.mse_loss(pred.sigmoid(), label, reduction='none')
 
         return (loss * sample_weight).mean()
 
     def _treshold_result(self, predicted):
-        onset, dur = predicted
+        predicted_np = predicted.detach().cpu().numpy()
+        # predicted_np = (predicted_np + 1) / 2
 
-        onset_np = onset.detach().cpu().numpy()
-        dur_np = dur.detach().cpu().numpy()
-
-        recon_np = np.stack(
-            [onset_np[:, None, :, :], dur_np[:, None, :, :]], 
-            axis=1
-        )
+        recon_np = predicted_np[:, None, :, :]
 
         recon_np = np.where(
             recon_np > 0.87,
@@ -104,4 +109,4 @@ class Autoencoder(nn.Module):
             np.zeros_like(recon_np)
         )
 
-        return onset_np
+        return predicted_np

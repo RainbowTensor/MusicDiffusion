@@ -100,15 +100,7 @@ class Encoder(nn.Module):
     ):
         super().__init__()
 
-        self.embed_onset = nn.Sequential(
-            conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
-            nn.GELU(),
-            conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
-            nn.GELU(),
-            conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
-        )
-
-        self.embed_duration = nn.Sequential(
+        self.embed = nn.Sequential(
             conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
             nn.GELU(),
             conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
@@ -156,18 +148,14 @@ class Encoder(nn.Module):
         """
         x = x.permute(0, 1, 3, 2)
 
-        onset = x[:, 0, :, :][:, None, :, :]
-        duration = x[:, 1, :, :][:, None, :, :]
-
-        h_onset = self.embed_onset(onset)
-        h_duration = self.embed_duration(duration)
+        h = self.embed(x)
         
-        B, C, H, W = h_onset.shape
+        B, C, H, W = h.shape
 
-        h_onset = h_onset.reshape([B, C * H, W])
-        h_duration = h_duration.reshape([B, C * H, W])
+        h = h.reshape([B, C * H, W])
+        # h_duration = h_duration.reshape([B, C * H, W])
 
-        h = self.flatten_proj(h_onset + h_duration).permute(0, 2, 1)   # B, W, C
+        h = self.flatten_proj(h).permute(0, 2, 1)   # B, W, C
         h = self.pos_encoding(h.permute(1, 0, 2))   # W, B, C
         
         h = self.down_modules(h.permute(1, 0, 2))
@@ -219,36 +207,11 @@ class Decoder(nn.Module):
             )
 
         self.up_modules = nn.Sequential(*up_modules)
-
-        self.branch_onset = Transformer(
-            dim=block_out_channels[-1],
-            depth=attn_per_block // 2,
-            ff_mult=ff_mult,
-            dropout=dropout
-        )
-
-        self.branch_duration = Transformer(
-            dim=block_out_channels[-1],
-            depth=attn_per_block // 2,
-            ff_mult=ff_mult,
-            dropout=dropout
-        )
+        self.proj_down = FeedForward(dim=block_channels, out_dim=img_height, mult=ff_mult, dropout=dropout)
 
         self.norm_out = Normalize(img_height, add_conv=False)
-
-        self.to_onset = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
-        self.to_duration = FeedForward(dim=block_out_channels[-1], out_dim=img_height, mult=ff_mult)
-
-        self.conv_out_onset = nn.Sequential(
-            conv_nd(2, in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.GELU(),
-            conv_nd(2, in_channels=16, out_channels=32, kernel_size=3, padding=1),
-            nn.GELU(),
-            conv_nd(2, in_channels=32, out_channels=1, kernel_size=3, padding=1)
-        )
-
-        self.conv_out_duration = nn.Sequential(
-            conv_nd(2, in_channels=2, out_channels=16, kernel_size=3, padding=1),
+        self.conv_out = nn.Sequential(
+            conv_nd(2, in_channels=1, out_channels=16, kernel_size=3, padding=1),
             nn.GELU(),
             conv_nd(2, in_channels=16, out_channels=32, kernel_size=3, padding=1),
             nn.GELU(),
@@ -262,22 +225,15 @@ class Decoder(nn.Module):
         """
         h = self.proj_in(z)
         h = self.up_modules(h)
+        h = self.proj_down(h)
 
-        h_onset = self.to_onset(self.branch_onset(h))
-        h_duration = self.to_duration(self.branch_duration(h))
+        h = self.norm_out(h.permute(0, 2, 1))
+        h = nonlinearity(h.permute(0, 2, 1))
 
-        h_onset = self.norm_out(h_onset.permute(0, 2, 1))
-        h_onset = nonlinearity(h_onset.permute(0, 2, 1))
+        h = h[:, None, :, :]
 
-        h_duration = self.norm_out(h_duration.permute(0, 2, 1))
-        h_duration = nonlinearity(h_duration.permute(0, 2, 1))
-
-        h = torch.stack([h_onset, h_duration], dim=1)
-
-        out_onset = self.conv_out_onset(h).squeeze(1)
-        out_dur = self.conv_out_duration(h).squeeze(1)
-
-        return out_onset, out_dur
+        out = self.conv_out(h).squeeze(1)
+        return out
     
 
 class Autoencoder1D(nn.Module):

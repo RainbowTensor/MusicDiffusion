@@ -66,21 +66,9 @@ if train_config["resume"]:
     artifact_dir = artifact.download(train_config["save_dir"])
     ckpt_path = f'{artifact_dir}/{train_config["save_name"]}.pt'
 
-    loaded_state_dict = torch.load(ckpt_path)
-    # new_state_dict = {}
-    # for param_name, param_value in loaded_state_dict.items():
-    #     new_param_name = param_name.replace("model.", "")
-    #     new_state_dict[new_param_name] = param_value
-
-    # model.model.load_state_dict(
-    #     new_state_dict, strict=False
-    # )
-    model.model.load_state_dict(
-        loaded_state_dict["autoencoder"],
-    )
-
-    model.discriminator.load_state_dict(
-        loaded_state_dict["discriminator"],
+    loaded_state_dict = torch.load(ckpt_path, map_location=torch.device('cpu'))
+    model.load_state_dict(
+        loaded_state_dict
     )
 else:
     assert logger_kwargs["id"] is None, \
@@ -124,7 +112,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
     for epoch in range(num_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(model):
-                loss, ce_loss, emb_loss, disct_loss, g_loss = model.training_step(batch)
+                loss, ce_loss, mse_loss, emb_loss = model.training_step(batch)
 
                 accelerator.backward(loss, retain_graph=True)
                 # accelerator.backward(disct_loss)
@@ -139,14 +127,11 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
             optimizer.zero_grad()
             # discr_optimizer.zero_grad()
 
-            accelerator.print(f"Step: {step}, loss: {loss}, emb_loss {emb_loss}, discriminator_loss {disct_loss}")
+            accelerator.print(f"Step: {step}, loss: {loss}, emb_loss {emb_loss}, mse_loss {mse_loss}")
 
             if step % train_config["checkpoint_every"] == 0 and step != 0:
                 unwrapped_model = accelerator.unwrap_model(model)
-                torch.save({
-                    "autoencoder": unwrapped_model.model.state_dict(),
-                    "discriminator": unwrapped_model.discriminator.state_dict()
-                }, save_path)
+                torch.save(unwrapped_model.state_dict(), save_path)
 
                 artifact = wandb.Artifact(f"model-{run.id}", "model")
                 artifact.add_file(save_path)
@@ -171,8 +156,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                     "loss": loss,
                     "ce_loss": ce_loss,
                     "emb_loss": emb_loss,
-                    "g_loss": g_loss,
-                    "discriminator_loss": disct_loss
+                    "mse_loss": mse_loss,
                 })
 
 

@@ -99,7 +99,7 @@ class LakhPrmat2cLMDB(Dataset):
         random_idx = random.choice(valid_instr_idxs)
 
         x = prmat2c_instr[random_idx]
-        x = self.blur_input(x)
+        # x = self.blur_input(x)
 
         if random.random() < 0.05:
             x = np.zeros_like(x)

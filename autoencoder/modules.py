@@ -218,6 +218,14 @@ class Decoder(nn.Module):
             conv_nd(2, in_channels=32, out_channels=1, kernel_size=3, padding=1)
         )
 
+        self.conv_out_onset = nn.Sequential(
+            conv_nd(2, in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.GELU(),
+            conv_nd(2, in_channels=16, out_channels=32, kernel_size=3, padding=1),
+            nn.GELU(),
+            conv_nd(2, in_channels=32, out_channels=1, kernel_size=3, padding=1)
+        )
+
     def forward(self, z):
         """
         Arguments:
@@ -232,8 +240,10 @@ class Decoder(nn.Module):
 
         h = h[:, None, :, :]
 
-        out = self.conv_out(h).squeeze(1)
-        return out
+        out_onset = self.conv_out_onset(h).squeeze(1)
+        out_duration = self.conv_out(h).squeeze(1)
+        
+        return out_onset, out_duration
     
 
 class Autoencoder1D(nn.Module):

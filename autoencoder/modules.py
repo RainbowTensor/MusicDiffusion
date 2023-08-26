@@ -293,10 +293,10 @@ class Autoencoder1D(nn.Module):
         encoded = self.encoder(x)
         encoded_conv = self.quant_conv(encoded.permute(0, 2, 1))
 
-        quant, emb_loss, info = self.quantize(encoded_conv[:, :, None, :])
+        quant, emb_loss, (_, _, indices) = self.quantize(encoded_conv[:, :, None, :])
         quant = quant.squeeze(2)
 
-        return encoded, quant, emb_loss
+        return encoded, quant, emb_loss, indices
 
     def decode(self, quant):
         quant = self.post_quant_conv(quant)
@@ -315,6 +315,6 @@ class Autoencoder1D(nn.Module):
         return dec
 
     def forward(self, input):
-        _, quant, _ = self.encode(input)
+        _, quant, _, _ = self.encode(input)
         dec = self.decode(quant)
         return dec

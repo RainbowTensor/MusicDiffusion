@@ -13,12 +13,12 @@ class Autoencoder(nn.Module):
         self.model = Autoencoder1D(**config["model"])
 
     def encode(self, x):
-        encoded, quantized, commit_loss = self.model.encode(x)
+        encoded, quantized, commit_loss, indices = self.model.encode(x)
 
         self.assert_not_nan(encoded, "encoded")
         self.assert_not_nan(quantized, "quantized")
 
-        return encoded, quantized, commit_loss
+        return encoded, quantized, indices, commit_loss
 
     def decode(self, x, sigmoid):
         dec_onset, dec_duration = self.model.decode(x)
@@ -36,7 +36,7 @@ class Autoencoder(nn.Module):
         return self._treshold_result(dec)
 
     def forward(self, x, inference=False):
-        encoded, quantized, commit_loss = self.encode(x)
+        encoded, quantized, _, commit_loss = self.encode(x)
 
         if inference:
             return self.from_latent(quantized)

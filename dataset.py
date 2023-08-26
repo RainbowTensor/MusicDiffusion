@@ -6,6 +6,7 @@ import io
 import lmdb
 import numpy as np
 import random
+from scipy.ndimage import gaussian_filter
 
 
 INSTR_TO_INDEX = {
@@ -97,4 +98,20 @@ class LakhPrmat2cLMDB(Dataset):
 
         random_idx = random.choice(valid_instr_idxs)
 
-        return prmat2c_instr[random_idx], np.array(random_idx)
+        x = prmat2c_instr[random_idx]
+        # x = self.blur_input(x)
+
+        if random.random() < 0.05:
+            x = np.zeros_like(x)
+
+        x = np.clip(x / 128, a_min=[0], a_max=[1])
+
+        return x, np.array(random_idx)
+
+    def blur_input(self, x):
+        x = x.astype("float")
+
+        onset_blur = gaussian_filter(x, 0.5) * 15
+        # duration_blur = gaussian_filter(duration, 0.7)
+
+        return onset_blur

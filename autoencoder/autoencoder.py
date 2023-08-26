@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .modules import VQModel
+from .modules import Autoencoder1D
 import numpy as np
 
 
@@ -10,15 +10,15 @@ class Autoencoder(nn.Module):
         super().__init__()
 
         self.config = config
-        self.model = VQModel(**config["model"])
+        self.model = Autoencoder1D(**config["model"])
 
     def encode(self, x):
-        (encoded, quantized), commit_loss, indices = self.model.encode(x)
+        encoded, quantized, commit_loss, indices = self.model.encode(x)
 
         self.assert_not_nan(encoded, "encoded")
         self.assert_not_nan(quantized, "quantized")
 
-        return encoded, quantized, commit_loss
+        return encoded, quantized, indices, commit_loss
 
     def decode(self, x, sigmoid):
         dec_onset, dec_duration = self.model.decode(x)
@@ -30,21 +30,20 @@ class Autoencoder(nn.Module):
 
         return dec_onset, dec_duration
 
-    def from_latent(self, encoded):
-        quant, _, _ = self.model.vqmodule(encoded, dim=1)
+    def from_latent(self, quant):
         dec = self.decode(quant, sigmoid=True)
 
         return self._treshold_result(dec)
 
     def forward(self, x, inference=False):
-        encoded, quantized, commit_loss = self.encode(x)
+        encoded, quantized, _, commit_loss = self.encode(x)
 
         if inference:
-            return self.from_latent(encoded)
+            return self.from_latent(quantized)
 
-        dec_onset, dec_duration = self.decode(quantized, sigmoid=False)
+        dec = self.decode(quantized, sigmoid=False)
 
-        return (dec_onset, dec_duration), commit_loss
+        return dec, commit_loss
 
     def assert_not_nan(self, x, where):
         if x.isnan().any():
@@ -54,68 +53,52 @@ class Autoencoder(nn.Module):
         images, labes = batch
 
         dec, commit_loss = self(images)
-        loss = self.compute_loss(images, dec, use_weight=False)
-        loss = loss + commit_loss
+        ce_loss, mse_loss = self.compute_loss(images, dec, use_weight=True)
+        loss = ce_loss + commit_loss + mse_loss
 
-        return loss, commit_loss
+        return loss, ce_loss, mse_loss, commit_loss
 
-    def compute_loss(self, input, output, use_weight=False):
-        pred_onsets, pred_durations = output
+    def compute_loss(self, label, pred, use_weight=False):
+        pred_onset, pred_duration = pred
+        pred_onset = pred_onset[:, None, :, :]
+        pred_duration = pred_duration[:, None, :, :]
 
-        onsets_label = input[:, 0, :, :][:, None, :, :]
-        duration_label = input[:, 1, :, :][:, None, :, :]
-
-        ce_onset = self._compute_bce_loss_with_weight(
-            pred_onsets, onsets_label, use_weight
-        )
-        ce_duration = self._compute_bce_loss_with_weight(
-            pred_durations, duration_label, use_weight
+        label_onset = torch.where(
+            label > 0,
+            torch.ones_like(label),
+            torch.zeros_like(label),
         )
 
-        return (ce_onset + ce_duration)
+        ce_loss = self._compute_loss_with_weight(
+            pred_onset, label_onset, loss_fn=F.binary_cross_entropy_with_logits, use_weight=use_weight
+        )
 
-    def _compute_bce_loss_with_weight(self, pred, label, use_weight=False):
-        label_not = torch.logical_not(label)
+        mse_loss = self._compute_loss_with_weight(
+            pred_duration.sigmoid(), label, loss_fn=F.mse_loss, use_weight=use_weight
+        )
+
+        return ce_loss, mse_loss * 4
+
+    def _compute_loss_with_weight(self, pred, label, loss_fn=F.mse_loss, use_weight=False):
         sample_weight = 1
 
         if use_weight:
-            n_pos = label.sum((1, 2, 3))
-            n_neg = label_not.sum((1, 2, 3))
-
-            weight = (n_pos / n_neg).mean() * 8
-
-            weight_neg = torch.empty_like(label).fill_(weight)
-            weight_pos = torch.ones_like(label)
-
-            sample_weight_pos = torch.where(
-                label == 1,
-                weight_pos,
-                weight_neg
+            sample_weight = torch.where(
+                label != 0,
+                3,
+                3
             )
 
-            sample_weight_neg = torch.where(
-                label == 1,
-                weight_neg,
-                weight_pos
-            )
-
-            sample_weight = torch.concat(
-                [sample_weight_pos, sample_weight_neg], dim=1
-            )
-
-        label = torch.concat([label, label_not], dim=1)
-
-        loss = F.binary_cross_entropy_with_logits(pred, label, reduction='none')
+        loss = loss_fn(pred, label, reduction='none')
 
         return (loss * sample_weight).mean()
 
     def _treshold_result(self, predicted):
-        onset, dur = predicted
+        predicted_onset, predicted_duration = predicted
+        predicted_np = predicted_onset.detach().cpu().numpy()
+        # predicted_np = (predicted_np + 1) / 2
 
-        onset_np = onset.detach().cpu().numpy()[:, 0, :, :]
-        dur_np = dur.detach().cpu().numpy()[:, 0, :, :]
-
-        recon_np = np.stack([onset_np, dur_np], axis=1)
+        recon_np = predicted_np[:, None, :, :]
 
         recon_np = np.where(
             recon_np > 0.87,
@@ -123,4 +106,4 @@ class Autoencoder(nn.Module):
             np.zeros_like(recon_np)
         )
 
-        return onset_np
+        return predicted_np

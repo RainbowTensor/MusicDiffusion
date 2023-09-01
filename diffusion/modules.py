@@ -12,6 +12,7 @@ class Attention2D(nn.Module):
     def forward(self, x, kv, self_attn=False):
         orig_shape = x.shape
         x = x.view(x.size(0), x.size(1), -1).permute(0, 2, 1)
+        kv = kv.view(kv.size(0), kv.size(1), -1).permute(0, 2, 1)
         if self_attn:
             kv = torch.cat([x, kv], dim=1)
         x = self.attn(x, kv, kv, need_weights=False)[0]
@@ -123,8 +124,8 @@ class InputEmbedding(nn.Module):
             embs.append(layer(x[:, i, :]))
 
         embs = torch.stack(embs, dim=1)
-        embs = rearrange(embs, "b i l c -> b c i l")
         embs = self.norm(embs)
+        embs = rearrange(embs, "b i l c -> b c i l")
         out = self.conv(embs)
 
         return out
@@ -166,7 +167,7 @@ class Paella(nn.Module):
             if i > 0:
                 down_block.append(nn.Sequential(
                     LayerNorm2d(c_hidden[i - 1], elementwise_affine=False, eps=1e-6),
-                    nn.Conv2d(c_hidden[i - 1], c_hidden[i], kernel_size=2, stride=2),
+                    nn.Conv2d(c_hidden[i - 1], c_hidden[i], kernel_size=2, stride=[1, 2]),
                 ))
             for _ in range(blocks[i]):
                 for block_type in level_config[i]:
@@ -185,7 +186,7 @@ class Paella(nn.Module):
             if i > 0:
                 up_block.append(nn.Sequential(
                     LayerNorm2d(c_hidden[i], elementwise_affine=False, eps=1e-6),
-                    nn.ConvTranspose2d(c_hidden[i], c_hidden[i - 1], kernel_size=2, stride=2),
+                    nn.ConvTranspose2d(c_hidden[i], c_hidden[i - 1], kernel_size=2, stride=[1, 2]),
                 ))
             self.up_blocks.append(up_block)
 
@@ -202,13 +203,8 @@ class Paella(nn.Module):
 
         # --- WEIGHT INIT ---
         self.apply(self._init_weights)  # General init
-        nn.init.normal_(self.byt5_mapper.weight, std=0.02)
-        nn.init.normal_(self.clip_mapper.weight, std=0.02)
-        nn.init.normal_(self.clip_image_mapper.weight, std=0.02)
         torch.nn.init.xavier_uniform_(self.embedding[1].weight, 0.02)
         nn.init.constant_(self.clf[1].weight, 0)
-        nn.init.normal_(self.in_mapper[0].weight, std=np.sqrt(1 / num_labels))
-        self.out_mapper[-1].weight.data = self.in_mapper[0].weight.data[:, :, None, None].clone()
 
         for level_block in self.down_blocks + self.up_blocks:
             for block in level_block:
@@ -268,7 +264,8 @@ class Paella(nn.Module):
         r_embed = self.gen_r_embedding(r)
 
         # Model Blocks
-        x = self.embedding(self.in_mapper(x).permute(0, 3, 1, 2))
+        x = self.in_mapper(x)
+        x = self.embedding(x)
         level_outputs = self._down_encode(x, r_embed)
         x = self._up_decode(level_outputs, r_embed)
         x = self.out_mapper(self.clf(x))

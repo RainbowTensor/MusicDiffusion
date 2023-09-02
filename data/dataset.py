@@ -21,6 +21,7 @@ INSTR_TO_INDEX = {
 NOTE_COUNT_TRESHOLD = 15
 
 
+#TODO: create absetracz lmdb dataset and add dataset for diffusion
 class POP909Prmat2cDataset(Dataset):
     def __init__(self, file_list):
 

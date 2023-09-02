@@ -5,7 +5,6 @@ from einops import rearrange
 
 from .vq import VectorQuantizer
 from .nn import conv_nd
-from .regularization import L1
 from .hourglass_transformer import (
     Transformer, FeedForward, PositionalEncoding, LinearDownsample, LinearUpsample
 )

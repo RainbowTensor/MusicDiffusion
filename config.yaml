@@ -32,30 +32,19 @@ autoencoder:
 music_diffusion:
   class: MusicDiffusion
   model:
-    blocks:
-    - 6
-    - 14
-    - 6
-    c_cond: 0
-    c_hidden:
-    - 512
-    - 1024
-    - 1024
-    c_in: 4
-    c_out: 4
+    c_in: 256
+    c_out: 256
+    num_labels: 2048
     c_r: 64
-    dropout: 0.1
-    kernel_size: 3
-    level_config:
-    - CT
-    - CTA
-    - CTA
-    n_class_cond: 6
-    nhead:
-    - -1
-    - 16
-    - 16
     patch_size: 2
+    c_hidden: [640, 1280, 1280]
+    n_classes: 6
+    nhead: [-1, 16, 16]
+    blocks: [6, 16, 6]
+    level_config: ['CT', 'CTA', 'CTA'],
+    kernel_size: 3
+    dropout: 0.1
+    self_attn: true
   train:
     batch_size: 4
     checkpoint_every: 1000

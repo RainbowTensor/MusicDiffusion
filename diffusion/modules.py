@@ -133,7 +133,7 @@ class InputEmbedding(nn.Module):
 
 class Paella(nn.Module):
     def __init__(self, c_in=256, c_out=256, num_labels=8192, c_r=64, patch_size=2, c_hidden=[640, 1280, 1280], 
-                 nhead=[-1, 16, 16], blocks=[6, 16, 6], level_config=['CT', 'CTA', 'CTA'],
+                 n_classes=6, nhead=[-1, 16, 16], blocks=[6, 16, 6], level_config=['CT', 'CTA', 'CTA'],
                  kernel_size=3, dropout=0.1, self_attn=True):
         super().__init__()
         self.c_r = c_r
@@ -147,6 +147,8 @@ class Paella(nn.Module):
             nn.Conv2d(c_in * (patch_size ** 2), c_hidden[0], kernel_size=1),
             LayerNorm2d(c_hidden[0], elementwise_affine=False, eps=1e-6)
         )
+
+        self.class_embedding = nn.Embedding(n_classes, c_r)
 
         def get_block(block_type, c_hidden, nhead, c_skip=0, dropout=0):
             if block_type == 'C':
@@ -259,9 +261,13 @@ class Paella(nn.Module):
                     x = block(x)
         return x
 
-    def forward(self, x, r):
+    def forward(self, x, r, class_labels=None):
         # Process the conditioning embeddings
         r_embed = self.gen_r_embedding(r)
+
+        if class_labels is not None:
+            class_emb = self.class_embedding(class_labels)
+            r_embed = class_emb + r_embed
 
         # Model Blocks
         x = self.in_mapper(x)

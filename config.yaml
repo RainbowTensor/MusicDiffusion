@@ -17,10 +17,10 @@ autoencoder:
     data_path: ../data/lakh_giant_midi_prmat1c_8bin_lmdb
     gradient_accumulation_steps: 2
     gradient_clip_val: 1.0
-    learning_rate: 1.0e-04
+    learning_rate: 0.0001
     logger_kwargs:
       entity: rainbow_tensor
-      id: 
+      id: null
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 1000
@@ -32,34 +32,46 @@ autoencoder:
 music_diffusion:
   class: MusicDiffusion
   model:
+    blocks:
+    - 6
+    - 8
+    - 8
+    c_hidden:
+    - 512
+    - 1024
+    - 1024
     c_in: 256
     c_out: 256
-    num_labels: 2048
     c_r: 64
-    patch_size: 2
-    c_hidden: [640, 1280, 1280]
-    n_classes: 6
-    nhead: [-1, 16, 16]
-    blocks: [6, 16, 6]
-    level_config: ['CT', 'CTA', 'CTA'],
-    kernel_size: 3
     dropout: 0.1
+    kernel_size: 3
+    level_config:
+    - CT
+    - CTA
+    - CTA
+    n_classes: 6
+    nhead:
+    - -1
+    - 16
+    - 16
+    num_labels: 2048
+    patch_size: 2
     self_attn: true
   train:
     batch_size: 4
     checkpoint_every: 1000
-    data_path: ../data/lakh_reduced_prmat2c_8bin_pt2_lmdb
+    data_path: ../data/lakh_giant_midi_prmat1c_8bin_lmdb
     gradient_accumulation_steps: 2
     gradient_clip_val: 1.0
     learning_rate: 0.0001
     logger_kwargs:
       entity: rainbow_tensor
-      id: null
+      id:
       log_model: all
       project: music_diffusion
     lr_warmup_steps: 500
-    mixed_precision: fp16
+    mixed_precision: 'no'
     num_epochs: 50
     resume: false
     save_dir: ./models
-    save_name: music_diffusion
+    save_name: diffusion_model

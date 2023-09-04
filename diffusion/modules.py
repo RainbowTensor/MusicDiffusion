@@ -4,6 +4,7 @@ import numpy as np
 from torch import nn
 from einops import rearrange
 
+
 class Attention2D(nn.Module):
     def __init__(self, c, nhead, dropout=0.0):
         super().__init__()
@@ -12,7 +13,7 @@ class Attention2D(nn.Module):
     def forward(self, x, kv, self_attn=False):
         orig_shape = x.shape
         x = x.view(x.size(0), x.size(1), -1).permute(0, 2, 1)
-        kv = kv.view(kv.size(0), kv.size(1), -1).permute(0, 2, 1)
+        kv = kv.reshape(kv.size(0), kv.size(1), -1).permute(0, 2, 1)
         if self_attn:
             kv = torch.cat([x, kv], dim=1)
         x = self.attn(x, kv, kv, need_weights=False)[0]
@@ -75,8 +76,10 @@ class AttnBlock(nn.Module):
         )
 
     def forward(self, x, kv):
+        kv = rearrange(kv, 'b c h w -> b w h c')
         kv = self.kv_mapper(kv)
-        x = x + self.attention(self.norm(x), kv, self_attn=self.self_attn)
+        kv = rearrange(kv, 'b w h c -> b c h w')
+        x = x + self.attention(self.norm(x), self.norm(kv), self_attn=self.self_attn)
         return x
 
 
@@ -114,7 +117,7 @@ class InputEmbedding(nn.Module):
         self.n_emb = n_emb
         self.emb_dim = emb_dim
 
-        self.emb_layers = [nn.Embedding(n_emb, emb_dim) for _ in range(n_input)]
+        self.emb_layers = nn.ModuleList([nn.Embedding(n_emb, emb_dim) for _ in range(n_input)])
         self.norm = nn.LayerNorm(emb_dim, elementwise_affine=False, eps=1e-6)
         self.conv = nn.Conv2d(emb_dim, emb_dim, 3, padding=1)
 
@@ -284,3 +287,6 @@ class Paella(nn.Module):
             random_x = torch.randint_like(x, 0, self.num_labels)
         x = x * (1 - mask) + random_x * mask
         return x, mask
+
+    def get_loss_weight(self, t, mask, min_val=0.3):
+        return 1 - (1 - mask) * ((1 - t) * (1 - min_val))[:, None, None]

@@ -1,9 +1,11 @@
+from scipy.ndimage import label
 import torch
 from torch import nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from ..data.utils import generate_source, generate_target
+from data.utils import generate_source, generate_target
+from data.consts import EMPTY_INDEX
 
 
 class MusicDiffusion(nn.Module):
@@ -12,6 +14,9 @@ class MusicDiffusion(nn.Module):
 
         self.autoencoder = autoencoder
         self.diffusion_model = diffusion_model
+        self.criterion = nn.CrossEntropyLoss(
+            reduction='none', label_smoothing=0.1,
+        )
 
     def forward(self, image, timestep, instr_labels):
         return self.diffusion_model(image, timestep, instr_labels)
@@ -35,14 +40,22 @@ class MusicDiffusion(nn.Module):
         indices_batched = indices.reshape(B, I, -1)
 
         target, target_mask = generate_target(indices_batched, valid_instr)
-        source, _ = generate_source(indices_batched, target_mask, valid_instr)
+        source, source_mask = generate_source(indices_batched, target_mask, valid_instr)
 
         instr_labels = target_mask.sum(-1).bool().float().argmax(-1)
 
         timestep = 1 - torch.rand(source.shape[0], device=source.device)
-        noised_source, _ = self.diffusion_model.add_noise(source, timestep)
-        pred = self(noised_source, timestep, instr_labels)
+        noised_source, mask = self.diffusion_model.add_noise(source, timestep)
 
-        loss = F.cross_entropy(pred, target)
+        input = torch.where(
+            source_mask == 1,
+            source,
+            noised_source
+        )
+        pred = self(input, timestep, instr_labels)
+
+        loss_weight = self.diffusion_model.get_loss_weight(timestep, mask)
+        loss = self.criterion(pred, target)
+        loss = ((loss * loss_weight).sum(dim=[1, 2]) / loss_weight.sum(dim=[1, 2])).mean()
 
         return loss

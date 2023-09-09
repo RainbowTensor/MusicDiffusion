@@ -47,11 +47,7 @@ class MusicDiffusion(nn.Module):
         timestep = 1 - torch.rand(source.shape[0], device=source.device)
         noised_source, mask = self.diffusion_model.add_noise(source, timestep)
 
-        input = torch.where(
-            source_mask == 1,
-            source,
-            noised_source
-        )
+        input = (source * (1 - target_mask)) + (target_mask * noised_source)
         pred = self(input, timestep, instr_labels)
 
         loss_weight = self.diffusion_model.get_loss_weight(timestep, mask)

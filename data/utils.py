@@ -21,12 +21,13 @@ def generate_target(indices, valid_instr):
     return target, target_mask
 
 def generate_source(indices, target_mask, valid_instr):
-    target_mask_reduced = target_mask.sum(-1).bool().float()
+    # target_mask_reduced = target_mask.sum(-1).bool().float()
 
     sampled_source_instrs = torch.randint(0, 2, (indices.size(0), 6), dtype=torch.float, device=indices.device)
     sampled_source_instrs = torch.logical_and(valid_instr, sampled_source_instrs).to(torch.float)
-    sampled_source_instrs = (sampled_source_instrs - target_mask_reduced).clamp(0)
+    # sampled_source_instrs = (sampled_source_instrs - target_mask_reduced).clamp(0)
     source_mask = sampled_source_instrs[:, :, None].expand_as(indices)
+    source_mask = torch.logical_or(source_mask, target_mask).long()
 
     source_empty = torch.empty_like(indices).fill_(EMPTY_INDEX)
     source = torch.where(

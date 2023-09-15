@@ -9,3 +9,4 @@ INSTR_TO_INDEX = {
 
 INDEX_TO_INSTR = dict([(v, k) for k, v in INSTR_TO_INDEX.items()])
 EMPTY_INDEX = 1726
+MASK_TOKRN = 2048

@@ -4,13 +4,11 @@ from torch.utils.data import DataLoader
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 import wandb
-from PIL import Image
-import numpy as np
 import os
 
 from diffusion.dataset import LakhPrmat2cLMDB
-from diffusion.modules import Paella
-from diffusion.music_diffusion import MusicDiffusion
+from diffusion_transformer.modules import VampNet
+from diffusion_transformer.music_diffusion import MusicDiffusion
 from autoencoder.autoencoder import Autoencoder
 
 
@@ -44,7 +42,7 @@ train_dataloader = DataLoader(
 
 autoencoder = Autoencoder(autoencoder_config)
 autoencoder.eval().requires_grad_(False)
-diffusion_model = Paella(**diffusion_config["model"])
+diffusion_model = VampNet(**diffusion_config["model"])
 model = MusicDiffusion(autoencoder, diffusion_model)
 
 total_params = sum(p.numel() for p in model.diffusion_model.parameters())

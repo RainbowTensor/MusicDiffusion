@@ -99,14 +99,14 @@ class InputEmbedding(nn.Module):
 
         self.emb_layers = nn.ModuleList([nn.Embedding(n_emb, emb_dim) for _ in range(n_input)])
         self.norm = nn.LayerNorm(emb_dim, elementwise_affine=False, eps=1e-6)
-        self.conv = nn.Conv2d(emb_dim, emb_dim, 3, padding=1)
+        self.conv = nn.Conv1d(emb_dim, emb_dim, 3, padding=1)
 
     def forward(self, x):
         embs = []
         for i, layer in enumerate(self.emb_layers):
             embs.append(layer(x[:, i, :]))
 
-        embs = torch.stack(embs, dim=1)
+        embs = torch.stack(embs, dim=1).reshape(x.shape[0])
         embs = self.norm(embs)
         embs = rearrange(embs, "b i l c -> b c i l")
         out = self.conv(embs)

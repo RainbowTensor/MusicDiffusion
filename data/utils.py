@@ -1,5 +1,11 @@
 import torch
-from .consts import EMPTY_INDEX
+from .consts import EMPTY_TOKEN
+
+def flatten_tensor(x):
+    return x.reshape(x.shape[0], -1)
+
+def unflatten_tensor(x, n):
+    return x.reshape(x.shape[0], n, -1)
 
 def generate_target(indices, valid_instr):
     sampled_target_instr_idx = torch.multinomial(valid_instr, 1)
@@ -11,7 +17,7 @@ def generate_target(indices, valid_instr):
 
     target_mask[batch_select, instr_select] = 1
 
-    target_empty = torch.empty_like(indices).fill_(EMPTY_INDEX)
+    target_empty = torch.empty_like(indices).fill_(EMPTY_TOKEN)
     target = torch.where(
         target_mask == 1,
         indices,
@@ -29,7 +35,7 @@ def generate_source(indices, target_mask, valid_instr):
     source_mask = sampled_source_instrs[:, :, None].expand_as(indices)
     source_mask = torch.logical_or(source_mask, target_mask).long()
 
-    source_empty = torch.empty_like(indices).fill_(EMPTY_INDEX)
+    source_empty = torch.empty_like(indices).fill_(EMPTY_TOKEN)
     source = torch.where(
         source_mask == 1,
         indices,

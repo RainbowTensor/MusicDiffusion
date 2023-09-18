@@ -5,11 +5,12 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from ..diffusion_transformer.activations import get_activation
-from ..diffusion_transformer.layers import InputEmbedding
-from ..diffusion_transformer.layers import FiLM
-from ..diffusion_transformer.layers import SequentialWithFiLM
-from ..diffusion_transformer.layers import WNConv1d
+from diffusion_transformer.activations import get_activation
+from diffusion_transformer.layers import InputEmbedding
+from diffusion_transformer.layers import FiLM
+from diffusion_transformer.layers import SequentialWithFiLM
+from diffusion_transformer.layers import WNConv1d
+from data.consts import EMPTY_TOKEN
 
 
 class RMSNorm(nn.Module):
@@ -220,8 +221,9 @@ class MultiHeadRelativeAttention(nn.Module):
         attn += position_bias
 
         # Apply mask to attention scores to prevent looking up invalid locations
+        _MASKING_VALUE = -1e+9 if attn.dtype == torch.float32 else -1e+4
         if mask is not None:
-            attn = attn.masked_fill(mask[None] == 0, -1e9)
+            attn = attn.masked_fill(mask[None] == 0, _MASKING_VALUE)
 
         # Normalize attention scores and add dropout
         attn = torch.softmax(attn, dim=3)
@@ -257,10 +259,8 @@ class TransformerLayer(nn.Module):
         self.flash_attn = flash_attn
 
         if flash_attn:
-            from flash_attn.flash_attention import FlashMHA
-            self.self_attn = FlashMHA(
-                embed_dim=d_model,
-                num_heads=n_heads,
+            from flash_attn.modules.mha import FlashSelfAttention
+            self.self_attn = FlashSelfAttention(
                 attention_dropout=dropout,
                 causal=False,
             )
@@ -318,7 +318,7 @@ class TransformerLayer(nn.Module):
         y = self.norm_1(x)
         y = self.film_1(y.permute(0, 2, 1), cond).permute(0, 2, 1)
         if self.flash_attn:
-            with torch.autocast(y.device.type, dtype=torch.bfloat16):
+            with torch.autocast(y.device.type, dtype=torch.float16):
                 y = self.self_attn(y)[0]
         else:
             y, position_bias = self.self_attn(y, y, y, x_mask, position_bias)
@@ -448,11 +448,14 @@ class VampNet(nn.Module):
         self.vocab_size = vocab_size
         self.flash_attn = flash_attn
 
-        self.embedding = InputEmbedding(
-            n_input=n_classes, 
-            n_emb=vocab_size, 
-            emb_dim=embedding_dim
-        )
+        #self.embedding = InputEmbedding(
+        #    n_input=n_classes, 
+        #    n_emb=vocab_size, 
+        #    emb_dim=embedding_dim
+        #)
+        
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.target_embedding = nn.Embedding(2, embedding_dim)
 
         self.transformer = TransformerStack(
             d_model=embedding_dim,
@@ -476,12 +479,21 @@ class VampNet(nn.Module):
             ),
         )
 
-    def forward(self, x):
-        x = self.embedding(x)
-        x_mask = torch.ones_like(x, dtype=torch.bool)[:, :1, :].squeeze(1)
+    def forward(self, x, target_condition):
+        x_mask = torch.ones_like(x, dtype=torch.bool)
+        x_mask = torch.where(
+            x == EMPTY_TOKEN,
+            torch.zeros_like(x_mask),
+            x_mask
+        )
 
-        x = rearrange(x, "b d n -> b n d")
+        x = self.embedding(x)
+        target_embedding = self.target_embedding(target_condition)
+        x = x + target_embedding
+
+        #x = rearrange(x, "b d n -> b n d")
         out = self.transformer(x=x, x_mask=x_mask)
+        out = out[:, :128, :]
         out = rearrange(out, "b n d -> b d n")
 
         out = self.classifier(out, None) # no cond here!

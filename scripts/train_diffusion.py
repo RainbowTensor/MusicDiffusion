@@ -52,7 +52,10 @@ print(f"Model has {total_params} params")
 api = wandb.Api()
 artifact = api.artifact('rainbow_tensor/music_diffusion/model-ifzqp7oq:v116', type='model')
 artifact.download("./models")
+autoencoder_state_dict = torch.load("./models/autoencoder.pt", map_location=torch.device('cpu'))
+autoencoder.load_state_dict(autoencoder_state_dict)
 
+loaded_state_dict = None
 if train_config["resume"]:
     assert logger_kwargs["id"] is not None, \
         "When resuming training, WandB run ID should be set."
@@ -73,9 +76,9 @@ if train_config["resume"]:
     artifact_dir = artifact.download(train_config["save_dir"])
     ckpt_path = f'{artifact_dir}/{train_config["save_name"]}.pt'
 
-    loaded_state_dict = torch.load(ckpt_path, map_location=torch.device('cpu'))
+    loaded_state_dict = torch.load(ckpt_path)
     model.diffusion_model.load_state_dict(
-        loaded_state_dict
+        loaded_state_dict["diffusion_model"]
     )
 else:
     assert logger_kwargs["id"] is None, \
@@ -95,7 +98,10 @@ else:
     with open("./config.yaml", "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
-optimizer = torch.optim.AdamW(model.diffusion_model.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.15)
+if loaded_state_dict is not None:
+    optimizer.load_state_dict(loaded_state_dict["optimizer"])
+    
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=train_config["lr_warmup_steps"],
@@ -110,8 +116,8 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
         gradient_accumulation_steps=gradient_accumulation_steps,
     )
 
-    model, train_dataloader, lr_scheduler = accelerator.prepare(
-        model, train_dataloader, lr_scheduler
+    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, lr_scheduler
     )
 
     model.autoencoder.eval().requires_grad_(False)
@@ -122,7 +128,8 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 loss = model.training_step(batch)
 
                 accelerator.backward(loss)
-                accelerator.clip_grad_norm_(model.parameters(), 1.0)
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(model.parameters(), 1.0)
 
                 optimizer.step()
                 lr_scheduler.step()
@@ -133,7 +140,11 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
 
             if step % train_config["checkpoint_every"] == 0 and step != 0:
                 unwrapped_model = accelerator.unwrap_model(model)
-                torch.save(unwrapped_model.diffusion_model.state_dict(), save_path)
+                state_dict = {
+                    "diffusion_model": unwrapped_model.diffusion_model.state_dict(),
+                    "optimizer": optimizer.state_dict()
+                }
+                torch.save(state_dict, save_path)
 
                 artifact = wandb.Artifact(f"model-{run.id}", "model")
                 artifact.add_file(save_path)

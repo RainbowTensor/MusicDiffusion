@@ -16,7 +16,7 @@ class MusicDiffusion(nn.Module):
         self.autoencoder = autoencoder
         self.diffusion_model = diffusion_model
         self.criterion = nn.CrossEntropyLoss(
-            label_smoothing=0.1,
+            label_smoothing=0.1, ignore_index=EMPTY_TOKEN
         )
 
     def forward(self, image, target_condition):
@@ -46,15 +46,17 @@ class MusicDiffusion(nn.Module):
         timestep = 1 - torch.rand(source.shape[0], device=source.device)
         mask = generate_mask(source, timestep)
         masked_input, _ = apply_mask(source, mask, MASK_TOKEN)
-        target_condition = source_mask - target_mask
 
         input = (source * (1 - target_mask)) + (target_mask * masked_input)
         input = flatten_tensor(input)
-        target_condition = flatten_tensor(target_condition)
-        target = flatten_tensor(target)
+        target_condition = flatten_tensor(target_mask)
+        target = torch.where(
+            target == EMPTY_TOKEN,
+            torch.zeros_like(target),
+            target
+        ).sum(1)
 
         pred = self(input, target_condition)
-
         loss = self.criterion(pred, target)
 
         return loss

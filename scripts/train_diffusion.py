@@ -8,7 +8,8 @@ import os
 
 from diffusion.dataset import LakhPrmat2cLMDB
 from diffusion_transformer.modules import VampNet
-from diffusion_transformer.music_diffusion import MusicDiffusion
+from diffusion.modules import Paella
+from diffusion.music_diffusion import MusicDiffusion
 from autoencoder.autoencoder import Autoencoder
 
 
@@ -42,7 +43,7 @@ train_dataloader = DataLoader(
 
 autoencoder = Autoencoder(autoencoder_config)
 autoencoder.eval().requires_grad_(False)
-diffusion_model = VampNet(**diffusion_config["model"])
+diffusion_model = Paella(**diffusion_config["model"])
 model = MusicDiffusion(autoencoder, diffusion_model)
 
 total_params = sum(p.numel() for p in model.diffusion_model.parameters())
@@ -99,8 +100,6 @@ else:
         yaml.dump(config, f, default_flow_style=False)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.15)
-if loaded_state_dict is not None:
-    optimizer.load_state_dict(loaded_state_dict["optimizer"])
     
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
@@ -142,7 +141,6 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 unwrapped_model = accelerator.unwrap_model(model)
                 state_dict = {
                     "diffusion_model": unwrapped_model.diffusion_model.state_dict(),
-                    "optimizer": optimizer.state_dict()
                 }
                 torch.save(state_dict, save_path)
 

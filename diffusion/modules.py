@@ -195,6 +195,8 @@ class Paella(nn.Module):
                 ))
             self.up_blocks.append(up_block)
 
+        self.pooling = nn.MaxPool2d(kernel_size=(n_classes, 1))
+
         # OUTPUT
         self.clf = nn.Sequential(
             LayerNorm2d(c_hidden[0], elementwise_affine=False, eps=1e-6),
@@ -277,7 +279,8 @@ class Paella(nn.Module):
         x = self.embedding(x)
         level_outputs = self._down_encode(x, r_embed)
         x = self._up_decode(level_outputs, r_embed)
-        x = self.out_mapper(self.clf(x))
+        x = self.pooling(self.clf(x))
+        x = self.out_mapper(x).squeeze(2)
         return x
 
     def add_noise(self, x, t, mask=None, random_x=None):

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from data.utils import generate_source, generate_target
-from data.consts import EMPTY_INDEX
+from data.consts import EMPTY_TOKEN, MASK_TOKEN
 
 
 class MusicDiffusion(nn.Module):
@@ -50,8 +50,14 @@ class MusicDiffusion(nn.Module):
         input = (source * (1 - target_mask)) + (target_mask * noised_source)
         pred = self(input, timestep, instr_labels)
 
+        target = torch.where(
+            target == EMPTY_TOKEN,
+            torch.zeros_like(target),
+            target
+        ).sum(1)
+
         loss_weight = self.diffusion_model.get_loss_weight(timestep, mask)
-        loss = self.criterion(pred, target)
-        loss = ((loss * loss_weight).sum(dim=[1, 2]) / loss_weight.sum(dim=[1, 2])).mean()
+        loss = self.criterion(pred, target).mean()
+        # loss = ((loss * loss_weight).sum(dim=[1, 2]) / loss_weight.sum(dim=[1, 2])).mean()
 
         return loss

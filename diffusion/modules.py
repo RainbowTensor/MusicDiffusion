@@ -1,19 +1,80 @@
 import math
 import torch
-import numpy as np
 from torch import nn
+from torch.utils.checkpoint import checkpoint
+import numpy as np
 from einops import rearrange
+
+
+def get_emb(sin_inp):
+    """
+    Gets a base embedding for one dimension with sin and cos intertwined
+    """
+    emb = torch.stack((sin_inp.sin(), sin_inp.cos()), dim=-1)
+    return torch.flatten(emb, -2, -1)
+
+
+class GradientCheckpointgMixin(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        return checkpoint(self.checkpoint_forward(), *args, **kwargs)
+
+    def checkpoint_forward(self):
+        def custome_forward(*inputs):
+            return self._call_impl(*inputs)
+        return custome_forward
+
+
+class PositionalEncoding1D(nn.Module):
+    def __init__(self, channels):
+        """
+        :param channels: The last dimension of the tensor you want to apply pos emb to.
+        """
+        super(PositionalEncoding1D, self).__init__()
+        self.org_channels = channels
+        channels = int(np.ceil(channels / 2) * 2)
+        self.channels = channels
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, channels, 2).float() / channels))
+        self.register_buffer("inv_freq", inv_freq)
+        self.register_buffer("cached_penc", None)
+
+    def forward(self, tensor):
+        """
+        :param tensor: A 3d tensor of size (batch_size, x, ch)
+        :return: Positional Encoding Matrix of size (batch_size, x, ch)
+        """
+        if len(tensor.shape) != 3:
+            raise RuntimeError("The input tensor has to be 3d!")
+
+        if self.cached_penc is not None and self.cached_penc.shape == tensor.shape:
+            return self.cached_penc
+
+        self.cached_penc = None
+        batch_size, x, orig_ch = tensor.shape
+        pos_x = torch.arange(x, device=tensor.device).type(self.inv_freq.type())
+        sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
+        emb_x = get_emb(sin_inp_x)
+        emb = torch.zeros((x, self.channels), device=tensor.device).type(tensor.type())
+        emb[:, : self.channels] = emb_x
+
+        self.cached_penc = emb[None, :, :orig_ch].repeat(batch_size, 1, 1)
+        return self.cached_penc
 
 
 class Attention2D(nn.Module):
     def __init__(self, c, nhead, dropout=0.0):
         super().__init__()
         self.attn = torch.nn.MultiheadAttention(c, nhead, dropout=dropout, bias=True, batch_first=True)
+        self.pos_encoding = PositionalEncoding1D(c)
 
     def forward(self, x, kv, self_attn=False):
         orig_shape = x.shape
         x = x.view(x.size(0), x.size(1), -1).permute(0, 2, 1)
+        x = self.pos_encoding(x) + x
         kv = kv.reshape(kv.size(0), kv.size(1), -1).permute(0, 2, 1)
+        kv = self.pos_encoding(kv) + kv
         if self_attn:
             kv = torch.cat([x, kv], dim=1)
         x = self.attn(x, kv, kv, need_weights=False)[0]
@@ -42,7 +103,7 @@ class GlobalResponseNorm(nn.Module):
         return self.gamma * (x * Nx) + self.beta + x
 
 
-class ResBlock(nn.Module):
+class ResBlock(GradientCheckpointgMixin):
     def __init__(self, c, c_skip=None, kernel_size=3, dropout=0.0):
         super().__init__()
         self.depthwise = nn.Conv2d(c + c_skip, c, kernel_size=kernel_size, padding=kernel_size // 2, groups=c)
@@ -63,7 +124,6 @@ class ResBlock(nn.Module):
         x = self.channelwise(x).permute(0, 3, 1, 2)
         return x + x_res
 
-
 class AttnBlock(nn.Module):
     def __init__(self, c, c_cond, nhead, self_attn=True, dropout=0.0):
         super().__init__()
@@ -75,12 +135,21 @@ class AttnBlock(nn.Module):
             nn.Linear(c_cond, c)
         )
 
-    def forward(self, x, kv):
+    def _forward(self, x, kv):
         kv = rearrange(kv, 'b c h w -> b w h c')
         kv = self.kv_mapper(kv)
         kv = rearrange(kv, 'b w h c -> b c h w')
         x = x + self.attention(self.norm(x), self.norm(kv), self_attn=self.self_attn)
         return x
+    
+    def forward(self, x, kv):
+        return checkpoint(self.checkpoint_forward(), x, kv)
+
+    def checkpoint_forward(self):
+        def custome_forward(*inputs):
+            x, kv = inputs
+            return self._forward(x, kv)
+        return custome_forward
 
 
 class FeedForwardBlock(nn.Module):
@@ -95,9 +164,18 @@ class FeedForwardBlock(nn.Module):
             nn.Linear(c * 4, c)
         )
 
-    def forward(self, x):
+    def _forward(self, x):
         x = x + self.channelwise(self.norm(x).permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
         return x
+    
+    def forward(self, x):
+        return checkpoint(self.checkpoint_forward(), x)
+
+    def checkpoint_forward(self):
+        def custome_forward(*inputs):
+            x = inputs
+            return self._forward(x)
+        return custome_forward
 
 
 class TimestepBlock(nn.Module):

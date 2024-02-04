@@ -1,4 +1,3 @@
-from scipy.ndimage import label
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -33,14 +32,16 @@ class MusicDiffusion(nn.Module):
             torch.zeros_like(note_count_instr)
         )
 
-        pianoroll_merge = rearrange(pianoroll_batched, "b i c w h -> (b i) c w h")
+        pianoroll_merge = rearrange(
+            pianoroll_batched, "b i c w h -> (b i) c w h")
 
         with torch.no_grad():
             _, _, indices, _ = self.autoencoder.encode(pianoroll_merge)
         indices_batched = indices.reshape(B, I, -1)
 
         target, target_mask = generate_target(indices_batched, valid_instr)
-        source, source_mask = generate_source(indices_batched, target_mask, valid_instr)
+        source, source_mask = generate_source(
+            indices_batched, target_mask, valid_instr)
 
         instr_labels = target_mask.sum(-1).bool().float().argmax(-1)
 
@@ -50,6 +51,12 @@ class MusicDiffusion(nn.Module):
         input = (source * (1 - target_mask)) + (target_mask * noised_source)
         pred = self(input, timestep, instr_labels)
 
+        mask = torch.where(
+            target == EMPTY_TOKEN,
+            torch.zeros_like(mask),
+            mask
+        ).sum(1)
+
         target = torch.where(
             target == EMPTY_TOKEN,
             torch.zeros_like(target),
@@ -58,6 +65,7 @@ class MusicDiffusion(nn.Module):
 
         loss_weight = self.diffusion_model.get_loss_weight(timestep, mask)
         loss = self.criterion(pred, target).mean()
-        # loss = ((loss * loss_weight).sum(dim=[1, 2]) / loss_weight.sum(dim=[1, 2])).mean()
+        loss = (
+            (loss * loss_weight).sum(dim=[1, 2]) / loss_weight.sum(dim=[1, 2])).mean()
 
         return loss

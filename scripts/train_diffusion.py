@@ -1,13 +1,12 @@
 import yaml
 import torch
+import bitsandbytes as bnb
 from torch.utils.data import DataLoader
-from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 import wandb
 import os
 
 from diffusion.dataset import LakhPrmat2cLMDB
-from diffusion_transformer.modules import VampNet
 from diffusion.modules import Paella
 from diffusion.music_diffusion import MusicDiffusion
 from autoencoder.autoencoder import Autoencoder
@@ -51,9 +50,11 @@ total_params = sum(p.numel() for p in model.diffusion_model.parameters())
 print(f"Model has {total_params} params")
 
 api = wandb.Api()
-artifact = api.artifact('rainbow_tensor/music_diffusion/model-ifzqp7oq:v116', type='model')
+artifact = api.artifact(
+    'rainbow_tensor/music_diffusion/model-ifzqp7oq:v116', type='model')
 artifact.download("./models")
-autoencoder_state_dict = torch.load("./models/autoencoder.pt", map_location=torch.device('cpu'))
+autoencoder_state_dict = torch.load(
+    "./models/autoencoder.pt", map_location=torch.device('cpu'))
 autoencoder.load_state_dict(autoencoder_state_dict)
 
 loaded_state_dict = None
@@ -79,8 +80,9 @@ if train_config["resume"]:
 
     loaded_state_dict = torch.load(ckpt_path)
     model.diffusion_model.load_state_dict(
-        loaded_state_dict["diffusion_model"]
+        loaded_state_dict["diffusion_model"], strict=False
     )
+    del loaded_state_dict
 else:
     assert logger_kwargs["id"] is None, \
         "When creating new WandB run, ID should be empty."
@@ -99,24 +101,27 @@ else:
     with open("./config.yaml", "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.15)
-    
-lr_scheduler = get_cosine_schedule_with_warmup(
-    optimizer=optimizer,
-    num_warmup_steps=train_config["lr_warmup_steps"],
-    num_training_steps=(len(train_dataloader) * num_epochs),
-)
+optimizer = bnb.optim.AdamW(
+    model.parameters(), lr=learning_rate, weight_decay=0.1)
+# optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.1)
+
+# lr_scheduler = get_cosine_schedule_with_warmup(
+#     optimizer=optimizer,
+#     num_warmup_steps=train_config["lr_warmup_steps"],
+#     num_training_steps=(len(train_dataloader) * num_epochs),
+# )
 
 # wandb.watch(model, log_freq=20)
 
-def train_loop(model, optimizer, train_dataloader, lr_scheduler):
+
+def train_loop(model, optimizer, train_dataloader):
     accelerator = Accelerator(
         mixed_precision=mixed_precision,
         gradient_accumulation_steps=gradient_accumulation_steps,
     )
 
-    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, lr_scheduler
+    model, optimizer, train_dataloader = accelerator.prepare(
+        model, optimizer, train_dataloader
     )
 
     model.autoencoder.eval().requires_grad_(False)
@@ -131,7 +136,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                     accelerator.clip_grad_norm_(model.parameters(), 1.0)
 
                 optimizer.step()
-                lr_scheduler.step()
+                # lr_scheduler.step()
 
             optimizer.zero_grad()
 
@@ -154,7 +159,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 })
 
 
-train_loop(model, optimizer, train_dataloader, lr_scheduler)
+train_loop(model, optimizer, train_dataloader)
 
 if __name__ == "__main__":
     main()

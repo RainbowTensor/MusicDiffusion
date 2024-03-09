@@ -7,3 +7,4 @@ pretty_midi==0.2.10
 einops==0.7.0
 bitsandbytes==0.42.0
 torch==2.2.0
+axon_serve

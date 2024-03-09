@@ -5,7 +5,6 @@ from einops import rearrange
 
 from .vq import VectorQuantizer
 from .nn import conv_nd
-from .regularization import L1
 from .hourglass_transformer import (
     Transformer, FeedForward, PositionalEncoding, LinearDownsample, LinearUpsample
 )
@@ -291,7 +290,7 @@ class Autoencoder1D(nn.Module):
 
     def encode(self, x):
         encoded = self.encoder(x)
-        encoded_conv = self.quant_conv(encoded.permute(0, 2, 1))
+        encoded_conv = self.quant_conv(rearrange(encoded, "b l c -> b c l"))
 
         quant, emb_loss, (_, _, indices) = self.quantize(encoded_conv[:, :, None, :])
         quant = quant.squeeze(2)

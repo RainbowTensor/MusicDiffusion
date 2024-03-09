@@ -8,7 +8,7 @@ from PIL import Image
 import numpy as np
 import os
 
-from dataset import LakhPrmat2cLMDB
+from data.dataset import LakhPrmat2cLMDB
 from autoencoder.autoencoder import Autoencoder
 
 

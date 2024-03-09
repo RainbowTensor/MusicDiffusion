@@ -1,9 +1,11 @@
+from scipy.ndimage import label
 import torch
 from torch import nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from data.utils import generate_source, generate_target
+from .mask import generate_mask, apply_mask
+from data.utils import generate_source, generate_target, flatten_tensor
 from data.consts import EMPTY_TOKEN, MASK_TOKEN
 
 
@@ -14,11 +16,11 @@ class MusicDiffusion(nn.Module):
         self.autoencoder = autoencoder
         self.diffusion_model = diffusion_model
         self.criterion = nn.CrossEntropyLoss(
-            reduction='none', label_smoothing=0.1,
+            label_smoothing=0.1, ignore_index=EMPTY_TOKEN
         )
 
-    def forward(self, image, timestep, instr_labels):
-        return self.diffusion_model(image, timestep, instr_labels)
+    def forward(self, image, target_condition):
+        return self.diffusion_model(image, target_condition)
 
     def training_step(self, batch):
         pianoroll_batched = batch
@@ -32,40 +34,29 @@ class MusicDiffusion(nn.Module):
             torch.zeros_like(note_count_instr)
         )
 
-        pianoroll_merge = rearrange(
-            pianoroll_batched, "b i c w h -> (b i) c w h")
+        pianoroll_merge = rearrange(pianoroll_batched, "b i c w h -> (b i) c w h")
 
         with torch.no_grad():
             _, _, indices, _ = self.autoencoder.encode(pianoroll_merge)
         indices_batched = indices.reshape(B, I, -1)
 
         target, target_mask = generate_target(indices_batched, valid_instr)
-        source, source_mask = generate_source(
-            indices_batched, target_mask, valid_instr)
-
-        instr_labels = target_mask.sum(-1).bool().float().argmax(-1)
+        source, source_mask = generate_source(indices_batched, target_mask, valid_instr)
 
         timestep = 1 - torch.rand(source.shape[0], device=source.device)
-        noised_source, mask = self.diffusion_model.add_noise(source, timestep)
+        mask = generate_mask(source, timestep)
+        masked_input, _ = apply_mask(source, mask, MASK_TOKEN)
 
-        input = (source * (1 - target_mask)) + (target_mask * noised_source)
-        pred = self(input, timestep, instr_labels)
-
-        mask = torch.where(
-            target == EMPTY_TOKEN,
-            torch.zeros_like(mask),
-            mask
-        ).sum(1)
-
+        input = (source * (1 - target_mask)) + (target_mask * masked_input)
+        input = flatten_tensor(input)
+        target_condition = flatten_tensor(target_mask)
         target = torch.where(
             target == EMPTY_TOKEN,
             torch.zeros_like(target),
             target
         ).sum(1)
 
-        loss_weight = self.diffusion_model.get_loss_weight(timestep, mask)
-        loss = self.criterion(pred, target).mean()
-        loss = (
-            (loss * loss_weight).sum(dim=[1, 2]) / loss_weight.sum(dim=[1, 2])).mean()
+        pred = self(input, target_condition)
+        loss = self.criterion(pred, target)
 
         return loss

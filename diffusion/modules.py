@@ -1,8 +1,85 @@
 import math
 import torch
 from torch import nn
-import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 import numpy as np
+from einops import rearrange
+
+
+def get_emb(sin_inp):
+    """
+    Gets a base embedding for one dimension with sin and cos intertwined
+    """
+    emb = torch.stack((sin_inp.sin(), sin_inp.cos()), dim=-1)
+    return torch.flatten(emb, -2, -1)
+
+
+class GradientCheckpointgMixin(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        return checkpoint(self.checkpoint_forward(), *args, **kwargs)
+
+    def checkpoint_forward(self):
+        def custome_forward(*inputs):
+            return self._call_impl(*inputs)
+        return custome_forward
+
+
+class PositionalEncoding1D(nn.Module):
+    def __init__(self, channels):
+        """
+        :param channels: The last dimension of the tensor you want to apply pos emb to.
+        """
+        super(PositionalEncoding1D, self).__init__()
+        self.org_channels = channels
+        channels = int(np.ceil(channels / 2) * 2)
+        self.channels = channels
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, channels, 2).float() / channels))
+        self.register_buffer("inv_freq", inv_freq)
+        self.register_buffer("cached_penc", None)
+
+    def forward(self, tensor):
+        """
+        :param tensor: A 3d tensor of size (batch_size, x, ch)
+        :return: Positional Encoding Matrix of size (batch_size, x, ch)
+        """
+        if len(tensor.shape) != 3:
+            raise RuntimeError("The input tensor has to be 3d!")
+
+        if self.cached_penc is not None and self.cached_penc.shape == tensor.shape:
+            return self.cached_penc
+
+        self.cached_penc = None
+        batch_size, x, orig_ch = tensor.shape
+        pos_x = torch.arange(x, device=tensor.device).type(self.inv_freq.type())
+        sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
+        emb_x = get_emb(sin_inp_x)
+        emb = torch.zeros((x, self.channels), device=tensor.device).type(tensor.type())
+        emb[:, : self.channels] = emb_x
+
+        self.cached_penc = emb[None, :, :orig_ch].repeat(batch_size, 1, 1)
+        return self.cached_penc
+
+
+class Attention2D(nn.Module):
+    def __init__(self, c, nhead, dropout=0.0):
+        super().__init__()
+        self.attn = torch.nn.MultiheadAttention(c, nhead, dropout=dropout, bias=True, batch_first=True)
+        self.pos_encoding = PositionalEncoding1D(c)
+
+    def forward(self, x, kv, self_attn=False):
+        orig_shape = x.shape
+        x = x.view(x.size(0), x.size(1), -1).permute(0, 2, 1)
+        x = self.pos_encoding(x) + x
+        kv = kv.reshape(kv.size(0), kv.size(1), -1).permute(0, 2, 1)
+        kv = self.pos_encoding(kv) + kv
+        if self_attn:
+            kv = torch.cat([x, kv], dim=1)
+        x = self.attn(x, kv, kv, need_weights=False)[0]
+        x = x.permute(0, 2, 1).view(*orig_shape)
+        return x
 
 
 class LayerNorm2d(nn.LayerNorm):
@@ -11,24 +88,6 @@ class LayerNorm2d(nn.LayerNorm):
 
     def forward(self, x):
         return super().forward(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-    
-    
-class ModulatedLayerNorm(nn.Module):
-    def __init__(self, num_features, eps=1e-6, channels_first=True):
-        super().__init__()
-        self.ln = nn.LayerNorm(num_features, eps=eps)
-        self.gamma = nn.Parameter(torch.randn(1, 1, 1))
-        self.beta = nn.Parameter(torch.randn(1, 1, 1))
-        self.channels_first = channels_first
-
-    def forward(self, x, w=None):
-        x = x.permute(0, 2, 3, 1) if self.channels_first else x
-        if w is None:
-            x = self.ln(x)
-        else:
-            x = self.gamma * w * self.ln(x) + self.beta * w
-        x = x.permute(0, 3, 1, 2) if self.channels_first else x
-        return x
 
 
 class GlobalResponseNorm(nn.Module):
@@ -44,12 +103,11 @@ class GlobalResponseNorm(nn.Module):
         return self.gamma * (x * Nx) + self.beta + x
 
 
-class ResBlock(nn.Module):
-    def __init__(self, c, c_cond, c_skip=0, kernel_size=3, scaler=None, 
-                 layer_scale_init_value=1e-6, dropout=0.0):
+class ResBlock(GradientCheckpointgMixin):
+    def __init__(self, c, c_skip=None, kernel_size=3, dropout=0.0):
         super().__init__()
         self.depthwise = nn.Conv2d(c + c_skip, c, kernel_size=kernel_size, padding=kernel_size // 2, groups=c)
-        self.norm = ModulatedLayerNorm(c, channels_first=False)
+        self.norm = LayerNorm2d(c, elementwise_affine=False, eps=1e-6)
         self.channelwise = nn.Sequential(
             nn.Linear(c, c * 4),
             nn.GELU(),
@@ -58,42 +116,40 @@ class ResBlock(nn.Module):
             nn.Linear(c * 4, c)
         )
 
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones(c),  requires_grad=True) if layer_scale_init_value > 0 else None
-        self.scaler = scaler
-        if c_cond > 0:
-            self.cond_mapper = nn.Linear(c_cond, c)
-
-    def forward(self, x, s=None, x_skip=None):
+    def forward(self, x, x_skip=None):
         x_res = x
         if x_skip is not None:
             x = torch.cat([x, x_skip], dim=1)
-        x = self.depthwise(x)
-        if s is not None:
-            s = self.cond_mapper(s.permute(0, 2, 3, 1))
-            if s.size(1) == s.size(2) == 1:
-                s = s.expand(-1, x.size(2), x.size(3), -1)
-        x = self.norm(x.permute(0, 2, 3, 1), s)
-        x = self.channelwise(x)
-        x = self.gamma * x if self.gamma is not None else x
-        x = x_res + x.permute(0, 3, 1, 2)
-        if self.scaler is not None:
-            x = self.scaler(x)
-        return x
-
+        x = self.norm(self.depthwise(x)).permute(0, 2, 3, 1)
+        x = self.channelwise(x).permute(0, 3, 1, 2)
+        return x + x_res
 
 class AttnBlock(nn.Module):
-    def __init__(self, c, nhead, dropout=0.0):
+    def __init__(self, c, c_cond, nhead, self_attn=True, dropout=0.0):
         super().__init__()
+        self.self_attn = self_attn
         self.norm = LayerNorm2d(c, elementwise_affine=False, eps=1e-6)
-        self.attention = nn.MultiheadAttention(c, nhead, dropout=dropout, bias=True, batch_first=True)
+        self.attention = Attention2D(c, nhead, dropout)
+        self.kv_mapper = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(c_cond, c)
+        )
 
-    def forward(self, x):
-        orig_shape = x.shape
-        x = self.norm(x)
-        x = x.view(x.size(0), x.size(1), -1).permute(0, 2, 1)
-        x = x + self.attention(x, x, x, need_weights=False)[0]
-        x = x.permute(0, 2, 1).view(*orig_shape)
+    def _forward(self, x, kv):
+        kv = rearrange(kv, 'b c h w -> b w h c')
+        kv = self.kv_mapper(kv)
+        kv = rearrange(kv, 'b w h c -> b c h w')
+        x = x + self.attention(self.norm(x), self.norm(kv), self_attn=self.self_attn)
         return x
+    
+    def forward(self, x, kv):
+        return checkpoint(self.checkpoint_forward(), x, kv)
+
+    def checkpoint_forward(self):
+        def custome_forward(*inputs):
+            x, kv = inputs
+            return self._forward(x, kv)
+        return custome_forward
 
 
 class FeedForwardBlock(nn.Module):
@@ -108,9 +164,18 @@ class FeedForwardBlock(nn.Module):
             nn.Linear(c * 4, c)
         )
 
-    def forward(self, x):
+    def _forward(self, x):
         x = x + self.channelwise(self.norm(x).permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
         return x
+    
+    def forward(self, x):
+        return checkpoint(self.checkpoint_forward(), x)
+
+    def checkpoint_forward(self):
+        def custome_forward(*inputs):
+            x = inputs
+            return self._forward(x)
+        return custome_forward
 
 
 class TimestepBlock(nn.Module):
@@ -123,30 +188,54 @@ class TimestepBlock(nn.Module):
         return x * (1 + a) + b
 
 
-class DiffusionModel(nn.Module):
-    def __init__(self, c_in=4, c_out=4, c_r=64, patch_size=2, c_cond=1024, c_hidden=[640, 1280, 1280],
-                 nhead=[-1, 16, 16], blocks=[6, 16, 6], level_config=['CT', 'CTA', 'CTA'],
-                 n_class_cond=None, kernel_size=3, dropout=0.1):
+class InputEmbedding(nn.Module):
+    def __init__(self, n_input=6, n_emb=2048, emb_dim=32):
+        super().__init__()
+
+        self.n_emb = n_emb
+        self.emb_dim = emb_dim
+
+        self.emb_layers = nn.ModuleList([nn.Embedding(n_emb, emb_dim) for _ in range(n_input)])
+        self.norm = nn.LayerNorm(emb_dim, elementwise_affine=False, eps=1e-6)
+        self.conv = nn.Conv2d(emb_dim, emb_dim, 3, padding=1)
+
+    def forward(self, x):
+        embs = []
+        for i, layer in enumerate(self.emb_layers):
+            embs.append(layer(x[:, i, :]))
+
+        embs = torch.stack(embs, dim=1)
+        embs = self.norm(embs)
+        embs = rearrange(embs, "b i l c -> b c i l")
+        out = self.conv(embs)
+
+        return out
+    
+
+class Paella(nn.Module):
+    def __init__(self, c_in=256, c_out=256, num_labels=8192, c_r=64, patch_size=2, c_hidden=[640, 1280, 1280], 
+                 n_classes=6, nhead=[-1, 16, 16], blocks=[6, 16, 6], level_config=['CT', 'CTA', 'CTA'],
+                 kernel_size=3, dropout=0.1, self_attn=True):
         super().__init__()
         self.c_r = c_r
-        self.c_cond = c_cond
+        self.num_labels = num_labels
         if not isinstance(dropout, list):
             dropout = [dropout] * len(c_hidden)
 
+        self.in_mapper = InputEmbedding(6, n_emb=num_labels, emb_dim=c_in)
         self.embedding = nn.Sequential(
             nn.PixelUnshuffle(patch_size),
             nn.Conv2d(c_in * (patch_size ** 2), c_hidden[0], kernel_size=1),
             LayerNorm2d(c_hidden[0], elementwise_affine=False, eps=1e-6)
         )
 
-        if n_class_cond is not None:
-            self.class_embedding = nn.Embedding(n_class_cond, c_r)
+        self.class_embedding = nn.Embedding(n_classes, c_r)
 
         def get_block(block_type, c_hidden, nhead, c_skip=0, dropout=0):
             if block_type == 'C':
-                return ResBlock(c_hidden, c_cond, c_skip, kernel_size=kernel_size, dropout=dropout)
+                return ResBlock(c_hidden, c_skip, kernel_size=kernel_size, dropout=dropout)
             elif block_type == 'A':
-                return AttnBlock(c_hidden, nhead, dropout=dropout)
+                return AttnBlock(c_hidden, c_hidden, nhead, self_attn=self_attn, dropout=dropout)
             elif block_type == 'F':
                 return FeedForwardBlock(c_hidden, dropout=dropout)
             elif block_type == 'T':
@@ -161,7 +250,7 @@ class DiffusionModel(nn.Module):
             if i > 0:
                 down_block.append(nn.Sequential(
                     LayerNorm2d(c_hidden[i - 1], elementwise_affine=False, eps=1e-6),
-                    nn.Conv2d(c_hidden[i - 1], c_hidden[i], kernel_size=2, stride=2),
+                    nn.Conv2d(c_hidden[i - 1], c_hidden[i], kernel_size=2, stride=[1, 2]),
                 ))
             for _ in range(blocks[i]):
                 for block_type in level_config[i]:
@@ -180,9 +269,11 @@ class DiffusionModel(nn.Module):
             if i > 0:
                 up_block.append(nn.Sequential(
                     LayerNorm2d(c_hidden[i], elementwise_affine=False, eps=1e-6),
-                    nn.ConvTranspose2d(c_hidden[i], c_hidden[i - 1], kernel_size=2, stride=2),
+                    nn.ConvTranspose2d(c_hidden[i], c_hidden[i - 1], kernel_size=2, stride=[1, 2]),
                 ))
             self.up_blocks.append(up_block)
+
+        self.pooling = nn.MaxPool2d(kernel_size=(n_classes, 1))
 
         # OUTPUT
         self.clf = nn.Sequential(
@@ -190,8 +281,13 @@ class DiffusionModel(nn.Module):
             nn.Conv2d(c_hidden[0], c_out * (patch_size ** 2), kernel_size=1),
             nn.PixelShuffle(patch_size),
         )
+        self.out_mapper = nn.Sequential(
+            LayerNorm2d(c_out, elementwise_affine=False, eps=1e-6),
+            nn.Conv2d(c_out, num_labels, kernel_size=1, bias=False)
+        )
 
         # --- WEIGHT INIT ---
+        self.apply(self._init_weights)  # General init
         torch.nn.init.xavier_uniform_(self.embedding[1].weight, 0.02)
         nn.init.constant_(self.clf[1].weight, 0)
 
@@ -216,20 +312,17 @@ class DiffusionModel(nn.Module):
         emb = r[:, None] * emb[None, :]
         emb = torch.cat([emb.sin(), emb.cos()], dim=1)
         if self.c_r % 2 == 1:
-            emb = F.pad(emb, (0, 1), mode='constant')
+            emb = nn.functional.pad(emb, (0, 1), mode='constant')
         return emb
 
-    def gen_class_embeddings(self, class_idx):
-        return self.class_embedding(class_idx)
-
-    def _down_encode(self, x, r_embed, c_embed=None):
+    def _down_encode(self, x, r_embed):
         level_outputs = []
         for down_block in self.down_blocks:
             for block in down_block:
                 if isinstance(block, ResBlock):
-                    x = block(x, c_embed)
-                elif isinstance(block, AttnBlock):
                     x = block(x)
+                elif isinstance(block, AttnBlock):
+                    x = block(x, x)
                 elif isinstance(block, TimestepBlock):
                     x = block(x, r_embed)
                 else:
@@ -237,32 +330,44 @@ class DiffusionModel(nn.Module):
             level_outputs.insert(0, x)
         return level_outputs
 
-    def _up_decode(self, level_outputs, r_embed, c_embed=None):
+    def _up_decode(self, level_outputs, r_embed):
         x = level_outputs[0]
         for i, up_block in enumerate(self.up_blocks):
             for j, block in enumerate(up_block):
                 if isinstance(block, ResBlock):
-                    x = block(x, c_embed, level_outputs[i] if j == 0 and i > 0 else None)
+                    x = block(x, level_outputs[i] if j == 0 and i > 0 else None)
                 elif isinstance(block, AttnBlock):
-                    x = block(x)
+                    x = block(x, x)
                 elif isinstance(block, TimestepBlock):
                     x = block(x, r_embed)
                 else:
                     x = block(x)
         return x
 
-    def forward(self, x, r, class_idx=None, x_cat=None):
-        if x_cat is not None:
-            x = torch.cat([x, x_cat], dim=1)
+    def forward(self, x, r, class_labels=None):
         # Process the conditioning embeddings
         r_embed = self.gen_r_embedding(r)
-        if class_idx is not None:
-            class_embed = self.gen_class_embeddings(class_idx)
-            r_embed = r_embed + class_embed
+
+        if class_labels is not None:
+            class_emb = self.class_embedding(class_labels)
+            r_embed = class_emb + r_embed
 
         # Model Blocks
+        x = self.in_mapper(x)
         x = self.embedding(x)
         level_outputs = self._down_encode(x, r_embed)
         x = self._up_decode(level_outputs, r_embed)
-        x = self.clf(x)
+        x = self.pooling(self.clf(x))
+        x = self.out_mapper(x).squeeze(2)
         return x
+
+    def add_noise(self, x, t, mask=None, random_x=None):
+        if mask is None:
+            mask = (torch.rand_like(x.float()) <= t[:, None, None]).long()
+        if random_x is None:
+            random_x = torch.randint_like(x, 0, self.num_labels)
+        x = x * (1 - mask) + random_x * mask
+        return x, mask
+
+    def get_loss_weight(self, t, mask, min_val=0.3):
+        return 1 - (1 - mask) * ((1 - t) * (1 - min_val))[:, None, None]

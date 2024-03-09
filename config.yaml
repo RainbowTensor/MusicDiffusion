@@ -1,76 +1,77 @@
 autoencoder:
-  class: Autoencoder1D
-  model:
-    attn_per_block: 12
-    block_out_channels:
-    - 512
-    embed_dim: 32
-    embedding_channels: 16
-    ff_mult: 4
-    img_height: 128
-    in_channels: 1
-    n_embed: 2048
-    z_channels: 32
-  train:
-    batch_size: 16
-    checkpoint_every: 1000
-    data_path: ../data/lakh_giant_midi_prmat1c_8bin_lmdb
-    gradient_accumulation_steps: 2
-    gradient_clip_val: 1.0
-    learning_rate: 1.0e-04
-    logger_kwargs:
-      entity: rainbow_tensor
-      id: 
-      log_model: all
-      project: music_diffusion
-    lr_warmup_steps: 1000
-    mixed_precision: 'no'
-    num_epochs: 50
-    resume: false
-    save_dir: ./models
-    save_name: autoencoder
+    class: Autoencoder1D
+    model:
+        attn_per_block: 12
+        block_out_channels:
+            - 512
+        embed_dim: 32
+        embedding_channels: 16
+        ff_mult: 4
+        img_height: 128
+        in_channels: 1
+        n_embed: 2048
+        z_channels: 32
+    train:
+        batch_size: 16
+        checkpoint_every: 1000
+        data_path: ../data/lakh_giant_midi_prmat1c_8bin_lmdb
+        gradient_accumulation_steps: 2
+        gradient_clip_val: 1.0
+        learning_rate: 0.0001
+        logger_kwargs:
+            entity: rainbow_tensor
+            id: null
+            log_model: all
+            project: music_diffusion
+        lr_warmup_steps: 1000
+        mixed_precision: "no"
+        num_epochs: 50
+        resume: false
+        save_dir: ./models
+        save_name: autoencoder
 music_diffusion:
-  class: MusicDiffusion
-  model:
-    blocks:
-    - 6
-    - 14
-    - 6
-    c_cond: 0
-    c_hidden:
-    - 512
-    - 1024
-    - 1024
-    c_in: 4
-    c_out: 4
-    c_r: 64
-    dropout: 0.1
-    kernel_size: 3
-    level_config:
-    - CT
-    - CTA
-    - CTA
-    n_class_cond: 6
-    nhead:
-    - -1
-    - 16
-    - 16
-    patch_size: 2
-  train:
-    batch_size: 4
-    checkpoint_every: 1000
-    data_path: ../data/lakh_reduced_prmat2c_8bin_pt2_lmdb
-    gradient_accumulation_steps: 2
-    gradient_clip_val: 1.0
-    learning_rate: 0.0001
-    logger_kwargs:
-      entity: rainbow_tensor
-      id: null
-      log_model: all
-      project: music_diffusion
-    lr_warmup_steps: 500
-    mixed_precision: fp16
-    num_epochs: 50
-    resume: false
-    save_dir: ./models
-    save_name: music_diffusion
+    class: MusicDiffusion
+    model:
+        blocks:
+            - 6
+            - 8
+            - 8
+        c_hidden:
+            - 512
+            - 1024
+            - 1024
+        c_in: 256
+        c_out: 256
+        c_r: 64
+        dropout: 0.1
+        kernel_size: 3
+        level_config:
+            - CT
+            - CTAA
+            - CTAA
+        n_classes: 6
+        nhead:
+            - -1
+            - 16
+            - 16
+        num_labels: 2049
+        patch_size: 2
+        self_attn: true
+    train:
+        batch_size: 10
+        checkpoint_every: 1000
+        data_path: ../data/lakh_prmat1c_8bin_lmdb
+        gradient_accumulation_steps: 4
+        gradient_clip_val: 1.0
+        learning_rate: 0.00001
+        logger_kwargs:
+            entity: rainbow_tensor
+            id:
+            log_model: all
+            project: music_diffusion
+        lr_warmup_steps: 1000
+        mixed_precision: fp16
+        num_epochs: 50
+        resume: false
+        save_dir: ./models
+        save_name: diffusion_model

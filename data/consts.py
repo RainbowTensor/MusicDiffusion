@@ -1,12 +1,17 @@
-INSTR_TO_INDEX = {
-    -1: 0,
-    0: 1,
-    25: 2,
-    32: 3,
-    40: 4,
-    80: 5
-}
-
+ALLOWED_INSTRUMENTS = [-1, 0, 24, 25, 27, 28, 29, 30, 33, 35, 48, 52]
+INSTR_TO_INDEX = {k: v for v, k in enumerate(ALLOWED_INSTRUMENTS)}
 INDEX_TO_INSTR = dict([(v, k) for k, v in INSTR_TO_INDEX.items()])
+
+
+N_BARS = 8
+STEP_SIZE_BARS = 4
+BEATS_PER_BAR = 4
+
+BIN = 16
+STEPS_PER_BAR = BIN * BEATS_PER_BAR
+N_STEP = N_BARS * STEPS_PER_BAR
+STEP_SIZE = STEP_SIZE_BARS * BEATS_PER_BAR * BIN
+
+
 EMPTY_TOKEN = 2048
 MASK_TOKEN = 2049

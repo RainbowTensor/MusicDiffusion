@@ -8,7 +8,7 @@ from PIL import Image
 import numpy as np
 import os
 
-from data.dataset import LakhPrmat2cLMDB
+from data.pypianoroll_dataset import PypianorollLMDB
 from autoencoder.autoencoder import Autoencoder
 
 
@@ -30,7 +30,7 @@ mixed_precision = train_config["mixed_precision"]
 gradient_accumulation_steps = train_config["gradient_accumulation_steps"]
 save_path = f'./{train_config["save_dir"]}/autoencoder.pt'
 
-train_dataset = LakhPrmat2cLMDB(data_path)
+train_dataset = PypianorollLMDB(data_path)
 train_dataset[0]
 train_dataloader = DataLoader(
     train_dataset,
@@ -99,6 +99,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 
 # wandb.watch(model, log_freq=20)
 
+
 def train_loop(model, optimizer, train_dataloader, lr_scheduler):
     accelerator = Accelerator(
         mixed_precision=mixed_precision,
@@ -127,7 +128,8 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
             optimizer.zero_grad()
             # discr_optimizer.zero_grad()
 
-            accelerator.print(f"Step: {step}, loss: {loss}, emb_loss {emb_loss}, mse_loss {mse_loss}")
+            accelerator.print(
+                f"Step: {step}, loss: {loss}, emb_loss {emb_loss}, mse_loss {mse_loss}")
 
             if step % train_config["checkpoint_every"] == 0 and step != 0:
                 unwrapped_model = accelerator.unwrap_model(model)
@@ -136,7 +138,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 artifact = wandb.Artifact(f"model-{run.id}", "model")
                 artifact.add_file(save_path)
                 wandb.log_artifact(artifact, aliases=["best", "latest"])
-            
+
             if step % 200 == 0 and step != 0:
                 with torch.no_grad():
                     images, labels = batch
@@ -144,7 +146,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
 
                 images = []
                 for pianoroll in reconstructed:
-                    image = Image.fromarray(np.uint8(pianoroll.T * 255))
+                    image = Image.fromarray(np.uint8(pianoroll.T * 127))
                     images.append(
                         wandb.Image(image)
                     )

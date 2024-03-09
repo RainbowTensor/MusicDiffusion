@@ -14,7 +14,7 @@ def nonlinearity(x):
     return F.gelu(x)
 
 
-def Normalize(in_channels, add_conv=False, num_groups=32, eps=1e-4):   
+def Normalize(in_channels, add_conv=False, num_groups=32, eps=1e-4):
     return nn.BatchNorm1d(in_channels, eps=eps)
 
 
@@ -102,12 +102,15 @@ class Encoder(nn.Module):
         self.embed = nn.Sequential(
             conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
             nn.GELU(),
-            conv_nd(2, embedding_channels // 4, embedding_channels // 2, 3, padding=1),
+            conv_nd(2, embedding_channels // 4,
+                    embedding_channels // 2, 3, padding=1),
             nn.GELU(),
-            conv_nd(2, embedding_channels // 2, embedding_channels, 3, padding=1),
+            conv_nd(2, embedding_channels // 2,
+                    embedding_channels, 3, padding=1),
         )
 
-        self.flatten_proj = conv_nd(1, embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
+        self.flatten_proj = conv_nd(
+            1, embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
         self.pos_encoding = PositionalEncoding(block_out_channels[0] // 2)
 
         down_modules = []
@@ -138,7 +141,8 @@ class Encoder(nn.Module):
         self.down_modules = nn.Sequential(*down_modules)
 
         self.norm_out = Normalize(block_out_channels[-1])
-        self.to_out = FeedForward(dim=block_out_channels[-1], out_dim=z_channels, mult=ff_mult)
+        self.to_out = FeedForward(
+            dim=block_out_channels[-1], out_dim=z_channels, mult=ff_mult)
 
     def forward(self, x):
         """
@@ -148,7 +152,7 @@ class Encoder(nn.Module):
         x = x.permute(0, 1, 3, 2)
 
         h = self.embed(x)
-        
+
         B, C, H, W = h.shape
 
         h = h.reshape([B, C * H, W])
@@ -156,7 +160,7 @@ class Encoder(nn.Module):
 
         h = self.flatten_proj(h).permute(0, 2, 1)   # B, W, C
         h = self.pos_encoding(h.permute(1, 0, 2))   # W, B, C
-        
+
         h = self.down_modules(h.permute(1, 0, 2))
 
         # end
@@ -165,6 +169,7 @@ class Encoder(nn.Module):
         h = self.to_out(h)
 
         return h
+
 
 class Decoder(nn.Module):
     def __init__(
@@ -177,11 +182,13 @@ class Decoder(nn.Module):
         ff_mult=2,
     ):
         super().__init__()
-        self.proj_in = FeedForward(dim=z_channels, out_dim=block_out_channels[0], mult=ff_mult)
+        self.proj_in = FeedForward(
+            dim=z_channels, out_dim=block_out_channels[0], mult=ff_mult)
 
         up_modules = []
         for i, block_channels in enumerate(block_out_channels):
-            block_in_channels = block_channels if i == 0 else int(block_channels * 2)
+            block_in_channels = block_channels if i == 0 else int(
+                block_channels * 2)
 
             up_modules.append(
                 LinearUpsample(dim=block_in_channels, shorten_factor=2)
@@ -206,23 +213,19 @@ class Decoder(nn.Module):
             )
 
         self.up_modules = nn.Sequential(*up_modules)
-        self.proj_down = FeedForward(dim=block_channels, out_dim=img_height, mult=ff_mult, dropout=dropout)
+        self.proj_down = FeedForward(
+            dim=block_channels, out_dim=img_height, mult=ff_mult, dropout=dropout)
 
         self.norm_out = Normalize(img_height, add_conv=False)
         self.conv_out = nn.Sequential(
-            conv_nd(2, in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            conv_nd(2, in_channels=1, out_channels=16,
+                    kernel_size=3, padding=1),
             nn.GELU(),
-            conv_nd(2, in_channels=16, out_channels=32, kernel_size=3, padding=1),
+            conv_nd(2, in_channels=16, out_channels=32,
+                    kernel_size=3, padding=1),
             nn.GELU(),
-            conv_nd(2, in_channels=32, out_channels=1, kernel_size=3, padding=1)
-        )
-
-        self.conv_out_onset = nn.Sequential(
-            conv_nd(2, in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.GELU(),
-            conv_nd(2, in_channels=16, out_channels=32, kernel_size=3, padding=1),
-            nn.GELU(),
-            conv_nd(2, in_channels=32, out_channels=1, kernel_size=3, padding=1)
+            conv_nd(2, in_channels=32, out_channels=1,
+                    kernel_size=3, padding=1)
         )
 
     def forward(self, z):
@@ -239,11 +242,10 @@ class Decoder(nn.Module):
 
         h = h[:, None, :, :]
 
-        out_onset = self.conv_out_onset(h).squeeze(1)
-        out_duration = self.conv_out(h).squeeze(1)
-        
-        return out_onset, out_duration
-    
+        out = self.conv_out(h).squeeze(1)
+
+        return out
+
 
 class Autoencoder1D(nn.Module):
     def __init__(
@@ -292,7 +294,8 @@ class Autoencoder1D(nn.Module):
         encoded = self.encoder(x)
         encoded_conv = self.quant_conv(rearrange(encoded, "b l c -> b c l"))
 
-        quant, emb_loss, (_, _, indices) = self.quantize(encoded_conv[:, :, None, :])
+        quant, emb_loss, (_, _, indices) = self.quantize(
+            encoded_conv[:, :, None, :])
         quant = quant.squeeze(2)
 
         return encoded, quant, emb_loss, indices

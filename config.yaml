@@ -14,17 +14,17 @@ autoencoder:
     train:
         batch_size: 16
         checkpoint_every: 1000
-        data_path: ../data/lakh_giant_midi_prmat1c_8bin_lmdb
+        data_path: ../data/lakh_pypianoroll_16bin_lmdb
         gradient_accumulation_steps: 2
         gradient_clip_val: 1.0
         learning_rate: 0.0001
         logger_kwargs:
             entity: rainbow_tensor
-            id: null
+            id:
             log_model: all
             project: music_diffusion
         lr_warmup_steps: 1000
-        mixed_precision: "no"
+        mixed_precision: fp16
         num_epochs: 50
         resume: false
         save_dir: ./models
@@ -63,10 +63,10 @@ music_diffusion:
         data_path: ../data/lakh_prmat1c_8bin_lmdb
         gradient_accumulation_steps: 4
         gradient_clip_val: 1.0
-        learning_rate: 0.00001
+        learning_rate: 1.0e-05
         logger_kwargs:
             entity: rainbow_tensor
-            id:
+            id: null
             log_model: all
             project: music_diffusion
         lr_warmup_steps: 1000

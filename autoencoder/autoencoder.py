@@ -21,14 +21,13 @@ class Autoencoder(nn.Module):
         return encoded, quantized, indices, commit_loss
 
     def decode(self, x, sigmoid):
-        dec_onset, dec_duration = self.model.decode(x)
-        self.assert_not_nan(dec_onset, "dec_onset")
-        self.assert_not_nan(dec_duration, "dec_duration")
+        dec = self.model.decode(x)
+        self.assert_not_nan(dec, "dec_onset")
 
         if sigmoid:
-            return F.sigmoid(dec_onset), F.sigmoid(dec_duration)
+            return F.sigmoid(dec)
 
-        return dec_onset, dec_duration
+        return dec
 
     def from_latent(self, quant):
         dec = self.decode(quant, sigmoid=True)
@@ -50,7 +49,7 @@ class Autoencoder(nn.Module):
             raise Exception(f"NaN found in {where}")
 
     def training_step(self, batch):
-        images, labes = batch
+        images = batch
 
         dec, commit_loss = self(images)
         ce_loss, mse_loss = self.compute_loss(images, dec, use_weight=True)
@@ -59,25 +58,13 @@ class Autoencoder(nn.Module):
         return loss, ce_loss, mse_loss, commit_loss
 
     def compute_loss(self, label, pred, use_weight=False):
-        pred_onset, pred_duration = pred
-        pred_onset = pred_onset[:, None, :, :]
-        pred_duration = pred_duration[:, None, :, :]
-
-        label_onset = torch.where(
-            label > 0,
-            torch.ones_like(label),
-            torch.zeros_like(label),
-        )
-
-        ce_loss = self._compute_loss_with_weight(
-            pred_onset, label_onset, loss_fn=F.binary_cross_entropy_with_logits, use_weight=use_weight
-        )
+        pred = pred[:, None, :, :]
 
         mse_loss = self._compute_loss_with_weight(
             pred_duration.sigmoid(), label, loss_fn=F.mse_loss, use_weight=use_weight
         )
 
-        return ce_loss, mse_loss * 4
+        return ce_loss, mse_loss
 
     def _compute_loss_with_weight(self, pred, label, loss_fn=F.mse_loss, use_weight=False):
         sample_weight = 1

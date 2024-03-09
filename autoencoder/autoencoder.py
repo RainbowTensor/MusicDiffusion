@@ -52,19 +52,19 @@ class Autoencoder(nn.Module):
         images = batch
 
         dec, commit_loss = self(images)
-        ce_loss, mse_loss = self.compute_loss(images, dec, use_weight=True)
-        loss = ce_loss + commit_loss + mse_loss
+        mse_loss = self.compute_loss(images, dec, use_weight=True)
+        loss = mse_loss + commit_loss
 
-        return loss, ce_loss, mse_loss, commit_loss
+        return loss, mse_loss, commit_loss
 
     def compute_loss(self, label, pred, use_weight=False):
         pred = pred[:, None, :, :]
 
         mse_loss = self._compute_loss_with_weight(
-            pred_duration.sigmoid(), label, loss_fn=F.mse_loss, use_weight=use_weight
+            pred.sigmoid(), label, loss_fn=F.mse_loss, use_weight=use_weight
         )
 
-        return ce_loss, mse_loss
+        return mse_loss
 
     def _compute_loss_with_weight(self, pred, label, loss_fn=F.mse_loss, use_weight=False):
         sample_weight = 1

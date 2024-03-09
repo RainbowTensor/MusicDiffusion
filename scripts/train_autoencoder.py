@@ -113,7 +113,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
     for epoch in range(num_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(model):
-                loss, ce_loss, mse_loss, emb_loss = model.training_step(batch)
+                loss, mse_loss, emb_loss = model.training_step(batch)
 
                 accelerator.backward(loss, retain_graph=True)
                 # accelerator.backward(disct_loss)
@@ -156,7 +156,6 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
             if step % 20 == 0:
                 wandb.log({
                     "loss": loss,
-                    "ce_loss": ce_loss,
                     "emb_loss": emb_loss,
                     "mse_loss": mse_loss,
                 })

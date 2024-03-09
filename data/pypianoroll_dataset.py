@@ -45,6 +45,11 @@ class PypianorollLMDB(Dataset):
     def read_lmdb(self, idx):
         str_id = '{:08}'.format(idx)
         lmdb_data = self.txn.get(str_id.encode())
+
+        if lmdb_data is None:
+            rand_idx = random.randint(0, self.__len__())
+            return self.read_lmdb(rand_idx)
+
         lmdb_data = self.bytes_to_pypianoroll(lmdb_data)
 
         return lmdb_data

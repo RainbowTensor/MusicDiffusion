@@ -90,7 +90,7 @@ class PypianorollLMDB(Dataset):
         if x.shape[0] > N_STEP:
             x = x[:N_STEP]
 
-        x = self.blur_input()
+        x = self.blur_input(x)
 
         return x[None, :, :]
 

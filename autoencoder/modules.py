@@ -291,7 +291,7 @@ class Autoencoder1D(nn.Module):
         )
 
         self.quantize = VectorQuantizer(
-            n_embed, embed_dim, beta=0.25, remap=None, sane_index_shape=False
+            n_embed, embed_dim, beta=0.25
         )
 
         self.quant_conv = conv_nd(1, z_channels, embed_dim, 1)

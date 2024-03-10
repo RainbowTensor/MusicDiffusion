@@ -3,6 +3,7 @@ from torch import nn, einsum
 from einops import rearrange
 import math
 
+
 def FeedForward(dim, out_dim=None, mult=4, dropout=0.):
     if out_dim is None:
         out_dim = dim
@@ -30,10 +31,15 @@ class LinearDownsample(nn.Module):
         super().__init__()
         self.proj = nn.Linear(dim * shorten_factor, dim)
         self.shorten_factor = shorten_factor
+        self.norm = nn.LayerNorm(dim * shorten_factor)
 
     def forward(self, x):
         x = rearrange(x, 'b (n s) d -> b n (s d)', s=self.shorten_factor)
-        return self.proj(x)
+        x = self.norm(x)
+        x = self.proj(x)
+        if x.isnan().any():
+            raise Exception(f"NaN found in encoder LinearDownsample")
+        return x
 
 
 class LinearUpsample(nn.Module):
@@ -70,8 +76,8 @@ class Attention(nn.Module):
         self.scale = dim_head ** -0.5
         inner_dim = heads * dim_head
 
-        self.to_q = nn.Linear(dim, inner_dim, bias = False)
-        self.to_kv = nn.Linear(dim, inner_dim * 2, bias = False)
+        self.to_q = nn.Linear(dim, inner_dim, bias=False)
+        self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
         self.to_out = nn.Linear(inner_dim, dim)
 
         self.dropout = nn.Dropout(dropout)
@@ -82,25 +88,26 @@ class Attention(nn.Module):
         h = self.heads
         kv_input = x
 
-        q, k, v = self.to_q(x), *self.to_kv(kv_input).chunk(2, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
+        q, k, v = self.to_q(x), *self.to_kv(kv_input).chunk(2, dim=-1)
+        q, k, v = map(lambda t: rearrange(
+            t, 'b n (h d) -> b h n d', h=h), (q, k, v))
 
         q = q * self.scale
 
         sim = einsum('b h i d, b h j d -> b h i j', q, k)
 
-        attn = sim.softmax(dim = -1)
+        attn = sim.softmax(dim=-1)
         attn = self.dropout(attn)
 
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)', h = h)
+        out = rearrange(out, 'b h n d -> b n (h d)', h=h)
         return self.to_out(out)
-    
+
     def init_weights(self):
         def _init_weights(layer):
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_normal_(layer.weight)
-                
+
         self.apply(_init_weights)
 
 
@@ -118,8 +125,10 @@ class Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNormResidual(dim, Attention(dim, heads=heads, dim_head=dim // heads, dropout=dropout)),
-                PreNormResidual(dim, FeedForward(dim, mult=ff_mult, dropout=dropout))
+                PreNormResidual(dim, Attention(
+                    dim, heads=heads, dim_head=dim // heads, dropout=dropout)),
+                PreNormResidual(dim, FeedForward(
+                    dim, mult=ff_mult, dropout=dropout))
             ]))
 
         self.norm = nn.LayerNorm(dim)
@@ -130,7 +139,7 @@ class Transformer(nn.Module):
             x = ff(x)
 
         return self.norm(x)
-    
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
@@ -138,7 +147,8 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2)
+                             * (-math.log(10000.0) / d_model))
         pe = torch.zeros(max_len, 1, d_model)
         pe[:, 0, 0::2] = torch.sin(position * div_term)
         pe[:, 0, 1::2] = torch.cos(position * div_term)
@@ -151,7 +161,7 @@ class PositionalEncoding(nn.Module):
         """
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
-    
+
 
 class PatchEmbedding(nn.Module):
     def __init__(self, patch_size=16, num_hiddens=512):

@@ -3,6 +3,7 @@ autoencoder:
     model:
         attn_per_block: 12
         block_out_channels:
+            - 256
             - 512
         embed_dim: 32
         embedding_channels: 16
@@ -12,10 +13,10 @@ autoencoder:
         n_embed: 2048
         z_channels: 32
     train:
-        batch_size: 16
+        batch_size: 4
         checkpoint_every: 1000
         data_path: ../data/lakh_pypianoroll_16bin_lmdb
-        gradient_accumulation_steps: 2
+        gradient_accumulation_steps: 4
         gradient_clip_val: 1.0
         learning_rate: 0.0001
         logger_kwargs:

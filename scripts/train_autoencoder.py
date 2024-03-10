@@ -36,7 +36,8 @@ train_dataloader = DataLoader(
     train_dataset,
     batch_size=batch_size,
     shuffle=True,
-    num_workers=4
+    num_workers=2,
+    pin_memory=False,
 )
 
 model = Autoencoder(autoencoder_config)
@@ -139,10 +140,9 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 artifact.add_file(save_path)
                 wandb.log_artifact(artifact, aliases=["best", "latest"])
 
-            if step % 200 == 0 and step != 0:
+            if step % 500 == 0 and step != 0:
                 with torch.no_grad():
-                    images, labels = batch
-                    reconstructed = model(images, inference=True)
+                    reconstructed = model(batch, inference=True)
 
                 images = []
                 for pianoroll in reconstructed:

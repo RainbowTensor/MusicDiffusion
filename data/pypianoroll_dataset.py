@@ -7,6 +7,8 @@ import lmdb
 import numpy as np
 import random
 import pypianoroll
+from scipy.ndimage import gaussian_filter
+
 
 from .consts import STEPS_PER_BAR, N_STEP
 
@@ -46,9 +48,9 @@ class PypianorollLMDB(Dataset):
         str_id = '{:08}'.format(idx)
         lmdb_data = self.txn.get(str_id.encode())
 
-        if lmdb_data is None:
-            rand_idx = random.randint(0, self.__len__())
-            return self.read_lmdb(rand_idx)
+        # if lmdb_data is None:
+        #     rand_idx = random.randint(0, self.__len__())
+        #     return self.read_lmdb(rand_idx)
 
         lmdb_data = self.bytes_to_pypianoroll(lmdb_data)
 
@@ -73,7 +75,26 @@ class PypianorollLMDB(Dataset):
         selected_bars = track_pianoroll[bar_index:bar_index + N_STEP]
         x = selected_bars / 127
 
-        if x.sum() == 0:
-            return self.get_pianoroll(pianoroll)
+        # if x.sum() == 0:
+        #     return self.get_pianoroll(pianoroll)
+
+        if x.shape[0] < N_STEP:
+            x = np.pad(x, ((0, N_STEP - x.shape[0])))
+
+        if x.shape[1] < 128:
+            x = np.pad(x, ((0, 0), (0, 128 - x.shape[1])))
+
+        if x.shape[1] > 128:
+            x = np.zeros([N_STEP, 128])
+
+        if x.shape[0] > N_STEP:
+            x = x[:N_STEP]
+
+        x = self.blur_input()
 
         return x[None, :, :]
+
+    def blur_input(self, x):
+        x_blured = gaussian_filter(x, 5) * 15
+
+        return x_blured.clip(min=0, max=1)

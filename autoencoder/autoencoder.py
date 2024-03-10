@@ -72,7 +72,7 @@ class Autoencoder(nn.Module):
         if use_weight:
             sample_weight = torch.where(
                 label != 0,
-                3,
+                9,
                 3
             )
 
@@ -81,16 +81,15 @@ class Autoencoder(nn.Module):
         return (loss * sample_weight).mean()
 
     def _treshold_result(self, predicted):
-        predicted_onset, predicted_duration = predicted
-        predicted_np = predicted_onset.detach().cpu().numpy()
+        predicted_np = predicted.detach().cpu().numpy()
         # predicted_np = (predicted_np + 1) / 2
 
         recon_np = predicted_np[:, None, :, :]
 
-        recon_np = np.where(
-            recon_np > 0.87,
-            np.ones_like(recon_np),
-            np.zeros_like(recon_np)
-        )
+        # recon_np = np.where(
+        #     recon_np > 0.87,
+        #     np.ones_like(recon_np),
+        #     np.zeros_like(recon_np)
+        # )
 
         return predicted_np

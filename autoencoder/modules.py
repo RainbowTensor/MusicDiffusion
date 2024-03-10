@@ -58,6 +58,8 @@ class ResnetBlock(nn.Module):
                 )
 
     def forward(self, x, temb=None):
+        if x.isnan().any():
+            raise Exception(f"NaN found in encoder resblock input")
         """
         Arguments:
             x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
@@ -81,6 +83,9 @@ class ResnetBlock(nn.Module):
                 x = self.conv_shortcut(x)
             else:
                 x = self.nin_shortcut(x)
+
+        if h.isnan().any():
+            raise Exception(f"NaN found in encoder resblock")
 
         return (x + h).permute(0, 2, 1)
 
@@ -156,12 +161,14 @@ class Encoder(nn.Module):
         B, C, H, W = h.shape
 
         h = h.reshape([B, C * H, W])
-        # h_duration = h_duration.reshape([B, C * H, W])
 
         h = self.flatten_proj(h).permute(0, 2, 1)   # B, W, C
         h = self.pos_encoding(h.permute(1, 0, 2))   # W, B, C
 
         h = self.down_modules(h.permute(1, 0, 2))
+
+        if h.isnan().any():
+            raise Exception(f"NaN found in encoder down_modules")
 
         # end
         h = self.norm_out(h.permute(0, 2, 1))

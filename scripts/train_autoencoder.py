@@ -68,9 +68,17 @@ if train_config["resume"]:
     ckpt_path = f'{artifact_dir}/{train_config["save_name"]}.pt'
 
     loaded_state_dict = torch.load(ckpt_path, map_location=torch.device('cpu'))
+    new_state_dict = {}
+    for key, value in loaded_state_dict.items():
+        if '_orig_mod' in key:
+            key = key.replace('._orig_mod', '')
+        new_state_dict[key] = value
+
     model.load_state_dict(
-        loaded_state_dict
+        new_state_dict
     )
+    del loaded_state_dict
+    del new_state_dict
 else:
     assert logger_kwargs["id"] is None, \
         "When creating new WandB run, ID should be empty."
@@ -89,6 +97,8 @@ else:
     with open("./config.yaml", "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
+print("Compling model.")
+model.model = torch.compile(model.model)
 optimizer = torch.optim.AdamW(model.model.parameters(), lr=learning_rate)
 # discr_optimizer = torch.optim.AdamW(model.discriminator.parameters(), lr=1e-4)
 
@@ -146,7 +156,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
 
                 images = []
                 for pianoroll in reconstructed:
-                    image = Image.fromarray(np.uint8(pianoroll.T * 127))
+                    image = Image.fromarray(np.uint8(pianoroll.T * 255))
                     images.append(
                         wandb.Image(image)
                     )
@@ -161,7 +171,5 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 })
 
 
-train_loop(model, optimizer, train_dataloader, lr_scheduler)
-
 if __name__ == "__main__":
-    main()
+    train_loop(model, optimizer, train_dataloader, lr_scheduler)

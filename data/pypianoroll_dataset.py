@@ -90,11 +90,11 @@ class PypianorollLMDB(Dataset):
         if x.shape[0] > N_STEP:
             x = x[:N_STEP]
 
-        x = self.blur_input(x)
+        # x = self.blur_input(x)
 
         return x[None, :, :]
 
     def blur_input(self, x):
-        x_blured = gaussian_filter(x, 5) * 15
+        x_blured = gaussian_filter(x, 2) * 4
 
         return x_blured.clip(min=0, max=1)

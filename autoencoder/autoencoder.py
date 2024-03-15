@@ -61,7 +61,7 @@ class Autoencoder(nn.Module):
         pred = pred[:, None, :, :]
 
         mse_loss = self._compute_loss_with_weight(
-            pred.sigmoid(), label, loss_fn=F.mse_loss, use_weight=use_weight
+            pred.sigmoid(), label, loss_fn=self.inverse_huber_loss, use_weight=use_weight
         )
 
         return mse_loss
@@ -76,9 +76,19 @@ class Autoencoder(nn.Module):
                 3
             )
 
-        loss = loss_fn(pred, label, reduction='none')
+        loss = loss_fn(pred, label)
 
         return (loss * sample_weight).mean()
+
+    def inverse_huber_loss(self, output, target):
+        absdiff = torch.abs(output - target)
+        C = 0.2 * torch.max(absdiff).item()
+
+        return torch.where(
+            absdiff < C,
+            absdiff,
+            (absdiff * absdiff + C * C) / (2 * C)
+        )
 
     def _treshold_result(self, predicted):
         predicted_np = predicted.detach().cpu().numpy()

@@ -21,13 +21,14 @@ class Autoencoder(nn.Module):
         return encoded, quantized, indices, commit_loss
 
     def decode(self, x, sigmoid):
-        dec = self.model.decode(x)
-        self.assert_not_nan(dec, "dec_onset")
+        dec, dec_onset = self.model.decode(x)
+        self.assert_not_nan(dec, "dec")
+        self.assert_not_nan(dec_onset, "dec_onset")
 
         if sigmoid:
-            return F.sigmoid(dec)
+            return F.sigmoid(dec), F.sigmoid(dec_onset)
 
-        return dec
+        return dec, dec_onset
 
     def from_latent(self, quant):
         dec = self.decode(quant, sigmoid=True)
@@ -52,19 +53,31 @@ class Autoencoder(nn.Module):
         images = batch
 
         dec, commit_loss = self(images)
-        mse_loss = self.compute_loss(images, dec, use_weight=True)
-        loss = mse_loss + commit_loss
+        mse_loss, ce_loss = self.compute_loss(images, dec, use_weight=False)
+        loss = mse_loss + ce_loss + commit_loss
 
-        return loss, mse_loss, commit_loss
+        return loss, mse_loss, ce_loss, commit_loss
 
     def compute_loss(self, label, pred, use_weight=False):
+        pred, pred_onset = pred
+        pred_onset = pred_onset[:, None, :, :]
         pred = pred[:, None, :, :]
 
-        mse_loss = self._compute_loss_with_weight(
-            pred.sigmoid(), label, loss_fn=self.inverse_huber_loss, use_weight=use_weight
+        label_onset = torch.where(
+            label > 0,
+            torch.ones_like(label),
+            torch.zeros_like(label),
         )
 
-        return mse_loss
+        ce_loss = self._compute_loss_with_weight(
+            pred_onset, label_onset, loss_fn=F.binary_cross_entropy_with_logits, use_weight=use_weight
+        )
+
+        mse_loss = self._compute_loss_with_weight(
+            pred.sigmoid(), label, loss_fn=F.mse_loss, use_weight=use_weight
+        )
+
+        return mse_loss, ce_loss
 
     def _compute_loss_with_weight(self, pred, label, loss_fn=F.mse_loss, use_weight=False):
         sample_weight = 1
@@ -76,7 +89,7 @@ class Autoencoder(nn.Module):
                 3
             )
 
-        loss = loss_fn(pred, label)
+        loss = loss_fn(pred, label, reduction='none')
 
         return (loss * sample_weight).mean()
 
@@ -91,10 +104,12 @@ class Autoencoder(nn.Module):
         )
 
     def _treshold_result(self, predicted):
-        predicted_np = predicted.detach().cpu().numpy()
+        pred, pred_onset = pred
+
+        pred_onset_np = pred_onset.squeeze().detach().cpu().numpy()
         # predicted_np = (predicted_np + 1) / 2
 
-        recon_np = predicted_np[:, None, :, :]
+        recon_np = pred_onset_np[:, None, :, :]
 
         # recon_np = np.where(
         #     recon_np > 0.87,
@@ -102,4 +117,4 @@ class Autoencoder(nn.Module):
         #     np.zeros_like(recon_np)
         # )
 
-        return predicted_np
+        return pred_onset_np

@@ -104,7 +104,7 @@ class Autoencoder(nn.Module):
         )
 
     def _treshold_result(self, predicted):
-        pred, pred_onset = pred
+        pred, pred_onset = predicted
 
         pred_onset_np = pred_onset.squeeze().detach().cpu().numpy()
         # predicted_np = (predicted_np + 1) / 2

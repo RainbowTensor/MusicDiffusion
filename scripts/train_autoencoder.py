@@ -75,7 +75,7 @@ if train_config["resume"]:
         new_state_dict[key] = value
 
     model.load_state_dict(
-        new_state_dict
+        new_state_dict, strict=False
     )
     del loaded_state_dict
     del new_state_dict
@@ -168,6 +168,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                     "loss": loss,
                     "emb_loss": emb_loss,
                     "mse_loss": mse_loss,
+                    "ce_loss": ce_loss,
                 })
 
 

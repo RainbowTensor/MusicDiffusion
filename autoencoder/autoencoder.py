@@ -74,7 +74,7 @@ class Autoencoder(nn.Module):
         )
 
         mse_loss = self._compute_loss_with_weight(
-            pred.sigmoid(), label, loss_fn=F.mse_loss, use_weight=use_weight
+            pred.sigmoid(), label, loss_fn=F.l1_loss, use_weight=use_weight
         )
 
         return mse_loss, ce_loss

@@ -129,7 +129,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                 accelerator.backward(loss, retain_graph=True)
                 # accelerator.backward(disct_loss)
 
-                accelerator.clip_grad_norm_(model.parameters(), 4.0)
+                accelerator.clip_grad_norm_(model.parameters(), 1.0)
 
                 optimizer.step()
                 # discr_optimizer.step()

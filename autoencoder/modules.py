@@ -105,9 +105,9 @@ class Encoder(nn.Module):
         super().__init__()
 
         self.embed = nn.Sequential(
-            conv_nd(2, in_channels, embedding_channels // 4, 3, padding=1),
+            conv_nd(2, in_channels, embedding_channels // 2, kernel_size=2, stride=2, padding=0),
             nn.GELU(),
-            conv_nd(2, embedding_channels // 4,
+            conv_nd(2, embedding_channels // 2,
                     embedding_channels // 2, 3, padding=1),
             nn.GELU(),
             conv_nd(2, embedding_channels // 2,
@@ -115,7 +115,7 @@ class Encoder(nn.Module):
         )
 
         self.flatten_proj = conv_nd(
-            1, embedding_channels * img_height, block_out_channels[0] // 2, 3, padding=1)
+            1, embedding_channels * img_height // 2, block_out_channels[0] // 2, 3, padding=1)
         self.pos_encoding = PositionalEncoding(block_out_channels[0] // 2)
 
         down_modules = []
@@ -157,7 +157,6 @@ class Encoder(nn.Module):
         x = x.permute(0, 1, 3, 2)
 
         h = self.embed(x)
-
         B, C, H, W = h.shape
 
         h = h.reshape([B, C * H, W])
@@ -225,7 +224,8 @@ class Decoder(nn.Module):
 
         self.norm_out = Normalize(img_height, add_conv=False)
         self.conv_out = nn.Sequential(
-            conv_nd(2, in_channels=1, out_channels=16,
+            torch.nn.UpsamplingBilinear2d(scale_factor=2),
+            conv_nd(2, in_channels=2, out_channels=16,
                     kernel_size=3, padding=1),
             nn.GELU(),
             conv_nd(2, in_channels=16, out_channels=32,
@@ -236,7 +236,8 @@ class Decoder(nn.Module):
         )
 
         self.conv_out_onset = nn.Sequential(
-            conv_nd(2, in_channels=1, out_channels=16,
+            torch.nn.UpsamplingBilinear2d(scale_factor=2),
+            conv_nd(2, in_channels=2, out_channels=16,
                     kernel_size=3, padding=1),
             nn.GELU(),
             conv_nd(2, in_channels=16, out_channels=32,
@@ -258,7 +259,7 @@ class Decoder(nn.Module):
         h = self.norm_out(h.permute(0, 2, 1))
         h = nonlinearity(h.permute(0, 2, 1))
 
-        h = h[:, None, :, :]
+        h = rearrange(h, 'b w (h c) -> b c w h', c=2)
 
         out = self.conv_out(h).squeeze(1)
         out_onset = self.conv_out_onset(h).squeeze(1)

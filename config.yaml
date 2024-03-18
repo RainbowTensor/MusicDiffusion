@@ -3,7 +3,6 @@ autoencoder:
     model:
         attn_per_block: 12
         block_out_channels:
-            - 256
             - 512
         embed_dim: 32
         embedding_channels: 16
@@ -11,21 +10,21 @@ autoencoder:
         img_height: 128
         in_channels: 1
         n_embed: 2048
-        z_channels: 32
+        z_channels: 64
     train:
         batch_size: 12
         checkpoint_every: 1000
         data_path: ../data/lakh_giant_midi_pypianoroll_16bin_lmdb
         gradient_accumulation_steps: 4
         gradient_clip_val: 1.0
-        learning_rate: 0.00002
+        learning_rate: 2.0e-05
         logger_kwargs:
             entity: rainbow_tensor
             id:
             log_model: all
             project: music_diffusion
         lr_warmup_steps: 1000
-        mixed_precision: "fp16"
+        mixed_precision: fp16
         num_epochs: 50
         resume: false
         save_dir: ./models

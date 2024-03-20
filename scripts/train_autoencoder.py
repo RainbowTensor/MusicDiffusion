@@ -171,6 +171,13 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
                     "ce_loss": ce_loss,
                 })
 
+        unwrapped_model = accelerator.unwrap_model(model)
+        torch.save(unwrapped_model.state_dict(), save_path)
+
+        artifact = wandb.Artifact(f"model-{run.id}", "model")
+        artifact.add_file(save_path)
+        wandb.log_artifact(artifact, aliases=["best", "latest"])
+
 
 if __name__ == "__main__":
     train_loop(model, optimizer, train_dataloader, lr_scheduler)

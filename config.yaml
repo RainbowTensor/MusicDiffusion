@@ -12,12 +12,12 @@ autoencoder:
         n_embed: 2048
         z_channels: 64
     train:
-        batch_size: 12
+        batch_size: 32
         checkpoint_every: 1000
         data_path: ../data/lakh_giant_midi_pypianoroll_16bin_lmdb
         gradient_accumulation_steps: 4
         gradient_clip_val: 1.0
-        learning_rate: 2.0e-05
+        learning_rate: 0.00005
         logger_kwargs:
             entity: rainbow_tensor
             id:

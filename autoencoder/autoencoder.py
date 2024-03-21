@@ -54,7 +54,7 @@ class Autoencoder(nn.Module):
 
         dec, commit_loss = self(images)
         mse_loss, ce_loss = self.compute_loss(images, dec, use_weight=False)
-        loss = mse_loss + ce_loss + commit_loss
+        loss = mse_loss + (0.01 * ce_loss) + commit_loss
 
         return loss, mse_loss, ce_loss, commit_loss
 

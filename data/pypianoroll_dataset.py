@@ -88,7 +88,8 @@ class PypianorollLMDB(Dataset):
 
             perturbed_pianoroll = pypianoroll.from_pretty_midi(
                 pianoroll_pm, resolution=16, algorithm='custom', first_beat_time=0)
-            perturbed_pianoroll = perturbed_pianoroll.tracks[0].pianoroll
+            perturbed_pianoroll = perturbed_pianoroll.tracks[0].pianoroll.clip(
+                max=127)
 
         return self.normalize_input(perturbed_pianoroll), self.normalize_input(selected_bars)
 

@@ -174,7 +174,10 @@ class PypianorollLMDB(Dataset):
 
         for i in range(n_perturbed_notes):
             rand_idx = random.randint(0, len(notes))
-            notes.pop(rand_idx)
+            try:
+                notes.pop(rand_idx)
+            except:
+                continue
 
         pianoroll_pm.instruments[0].notes = notes
 

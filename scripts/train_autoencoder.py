@@ -152,6 +152,7 @@ def train_loop(model, optimizer, train_dataloader, lr_scheduler):
 
             if step % 500 == 0 and step != 0:
                 with torch.no_grad():
+                    inputs, _ = batch
                     reconstructed = model(batch, inference=True)
 
                 images = []

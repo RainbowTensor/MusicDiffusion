@@ -50,11 +50,11 @@ class Autoencoder(nn.Module):
             raise Exception(f"NaN found in {where}")
 
     def training_step(self, batch):
-        images = batch
+        images, targets = batch
 
         dec, commit_loss = self(images)
-        mse_loss, ce_loss = self.compute_loss(images, dec, use_weight=False)
-        loss = mse_loss + (0.01 * ce_loss) + commit_loss
+        mse_loss, ce_loss = self.compute_loss(targets, dec, use_weight=False)
+        loss = mse_loss + (0.2 * ce_loss) + commit_loss
 
         return loss, mse_loss, ce_loss, commit_loss
 

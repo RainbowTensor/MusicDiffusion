@@ -36,7 +36,7 @@ class PypianorollLMDB(Dataset):
         pianoroll = self.read_lmdb(idx)
         pianoroll_input, pianoroll_target = self.get_pianoroll(pianoroll)
 
-        return torch.from_numpy(pianoroll_input), torch.from_numpy(pianoroll_target)
+        return torch.Tensor(pianoroll_input), torch.Tensor(pianoroll_target)
 
     def _init_db(self):
         self.env = lmdb.open(
@@ -86,10 +86,13 @@ class PypianorollLMDB(Dataset):
             pianoroll_pm = self.shif_rhythm(pianoroll_pm)
             pianoroll_pm = self.delete_notes(pianoroll_pm)
 
-            perturbed_pianoroll = pypianoroll.from_pretty_midi(
-                pianoroll_pm, resolution=16, algorithm='custom', first_beat_time=0)
-            perturbed_pianoroll = perturbed_pianoroll.tracks[0].pianoroll.clip(
-                max=127)
+            try:
+                perturbed_pianoroll = pypianoroll.from_pretty_midi(
+                    pianoroll_pm, resolution=16, algorithm='custom', first_beat_time=0)
+                perturbed_pianoroll = perturbed_pianoroll.tracks[0].pianoroll.clip(
+                    max=127)
+            except:
+                perturbed_pianoroll = selected_bars
 
         return self.normalize_input(perturbed_pianoroll), self.normalize_input(selected_bars)
 
@@ -132,6 +135,7 @@ class PypianorollLMDB(Dataset):
 
         for note in shifted_notes:
             note.pitch += random.randint(-2, 2)
+            note.pitch = min(note.pitch, 128)
 
         return pianoroll_pm
 
@@ -171,7 +175,7 @@ class PypianorollLMDB(Dataset):
 
     def delete_notes(self, pianoroll_pm):
         notes = pianoroll_pm.instruments[0].notes
-        n_perturbed_notes = ceil(len(notes) * self, self.perturbation_ratio)
+        n_perturbed_notes = ceil(len(notes) * self.perturbation_ratio)
 
         for i in range(n_perturbed_notes):
             rand_idx = random.randint(0, len(notes))

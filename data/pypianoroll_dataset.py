@@ -36,6 +36,10 @@ class PypianorollLMDB(Dataset):
         pianoroll = self.read_lmdb(idx)
         pianoroll_input, pianoroll_target = self.get_pianoroll(pianoroll)
 
+        if pianoroll_input.sum() < 1:
+            rand_idx = random.randint(0, len(self) - 1)
+            return self.__getitem__(rand_idx)
+
         return torch.Tensor(pianoroll_input), torch.Tensor(pianoroll_target)
 
     def _init_db(self):
@@ -50,11 +54,6 @@ class PypianorollLMDB(Dataset):
     def read_lmdb(self, idx):
         str_id = '{:08}'.format(idx)
         lmdb_data = self.txn.get(str_id.encode())
-
-        # if lmdb_data is None:
-        #     rand_idx = random.randint(0, self.__len__())
-        #     return self.read_lmdb(rand_idx)
-
         lmdb_data = self.bytes_to_pypianoroll(lmdb_data)
 
         return lmdb_data
@@ -89,8 +88,7 @@ class PypianorollLMDB(Dataset):
             try:
                 perturbed_pianoroll = pypianoroll.from_pretty_midi(
                     pianoroll_pm, resolution=16, algorithm='custom', first_beat_time=0)
-                perturbed_pianoroll = perturbed_pianoroll.tracks[0].pianoroll.clip(
-                    max=127)
+                perturbed_pianoroll = perturbed_pianoroll.tracks[0].pianoroll
             except:
                 perturbed_pianoroll = selected_bars
 
@@ -110,7 +108,9 @@ class PypianorollLMDB(Dataset):
         if x.shape[0] > N_STEP:
             x = x[:N_STEP]
 
-        return x[None, :, :]
+        x = x[None, :, :]
+
+        return x.clip(min=0, max=1)
 
     def blur_input(self, x):
         x_blured = gaussian_filter(x, 2) * 4
